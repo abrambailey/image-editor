@@ -1,0 +1,161 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-07T00:24:32.165Z",
+  "title": "Design System: Image Editor",
+  "extensions": {
+    "platform": "native-macos",
+    "previewNotice": "HTML/CSS entries below are self-contained documentation approximations of native controls. SwiftUI/AppKit source remains authoritative; browser system colors, control shapes, and CSS pixel lengths do not define app appearance.",
+    "nativeColorRoles": {
+      "primary": {
+        "displayName": "System Accent",
+        "source": "Color.accentColor / NSColor.controlAccentColor",
+        "purpose": "Prominent actions, selection, focus, and drop acceptance."
+      },
+      "alignment": {
+        "displayName": "Alignment Pink",
+        "source": "NSColor.systemPink",
+        "purpose": "Transient center guides."
+      },
+      "surround": {
+        "source": "NSColor.windowBackgroundColor"
+      },
+      "inspector": {
+        "source": "NSColor.controlBackgroundColor"
+      },
+      "field": {
+        "source": "NSColor.textBackgroundColor"
+      },
+      "ink": {
+        "source": "SwiftUI primary / secondary; NSColor.secondaryLabelColor"
+      }
+    },
+    "colorMeta": {
+      "checker-light": {
+        "role": "neutral",
+        "displayName": "Checker Light",
+        "nativeSource": "NSColor(calibratedWhite: 0.98, alpha: 1)"
+      },
+      "checker-shade": {
+        "role": "neutral",
+        "displayName": "Checker Shade",
+        "nativeSource": "NSColor(calibratedWhite: 0.90, alpha: 1)"
+      },
+      "handle-fill": {
+        "role": "neutral",
+        "displayName": "Handle White",
+        "nativeSource": "NSColor.white"
+      }
+    },
+    "typographyMeta": {
+      "headline": {
+        "displayName": "Empty-state headline",
+        "purpose": "Single introductory message.",
+        "nativeSource": ".system(size: 22, weight: .semibold)"
+      },
+      "title": {
+        "displayName": "Section title",
+        "purpose": "Inspector headings and toolbar filename.",
+        "nativeSource": ".system(size: 13, weight: .semibold)"
+      },
+      "label": {
+        "displayName": "Labels and measurements",
+        "purpose": "Helper copy, status, dimensions; monospaced digits where numeric.",
+        "nativeSource": ".system(size: 11)"
+      }
+    },
+    "shadows": [
+      {
+        "name": "canvas-lift",
+        "value": "NSShadow: black alpha 0.16; shadowOffset (0, -3); shadowBlurRadius 14 pt",
+        "purpose": "Lift the image canvas from the window surround."
+      }
+    ],
+    "nativeMetrics": {
+      "unit": "point",
+      "fieldBorder": "0.5 pt primary at 0.18 alpha",
+      "fieldFocus": "2 pt accent",
+      "selectionOutline": "1 pt accent at 0.8 alpha",
+      "handleSize": "8 × 8 pt",
+      "checkerCell": "10 × 10 pt"
+    },
+    "nativeMotion": "No authored motion tokens. Native controls, sheets, and progress indicators retain platform behavior.",
+    "rampPolicy": "Tonal ramps are omitted: dynamic macOS colors have no app-owned ramp, and the fixed checker pair is a transparency pattern, not a tonal scale."
+  },
+  "components": [
+    {
+      "name": "Prominent action",
+      "kind": "button",
+      "description": "Native borderedProminent, large control size, used for Open Image and Export. Browser preview is approximate.",
+      "nativeImplementation": ".buttonStyle(.borderedProminent).controlSize(.large)",
+      "html": "<button class=\"ds-primary\">Export PNG…</button>",
+      "css": ".ds-primary { appearance: auto; font: 13px system-ui; background: AccentColor; color: AccentColorText; border: none; border-radius: 999px; padding: 6px 24px; min-width: 200px; } .ds-primary:hover { filter: brightness(1.05); } .ds-primary:active { filter: brightness(.92); } .ds-primary:focus-visible { outline: 2px solid AccentColor; outline-offset: 3px; } .ds-primary:disabled { opacity: .45; }"
+    },
+    {
+      "name": "Standard action",
+      "kind": "button",
+      "description": "Native secondary control, illustrated by Center Image. Browser preview is approximate.",
+      "nativeImplementation": "Button(\"Center Image\", action: model.center)",
+      "html": "<button class=\"ds-secondary\">Center Image</button>",
+      "css": ".ds-secondary { appearance: auto; font: 13px system-ui; color: ButtonText; background: ButtonFace; border: 1px solid color-mix(in srgb, ButtonText 15%, transparent); border-radius: 5px; padding: 3px 12px; } .ds-secondary:hover { filter: brightness(.98); } .ds-secondary:active { filter: brightness(.92); } .ds-secondary:focus-visible { outline: 2px solid AccentColor; outline-offset: 2px; } .ds-secondary:disabled { opacity: .45; }"
+    },
+    {
+      "name": "Pixel field",
+      "kind": "input",
+      "refersTo": "pixel-field",
+      "description": "Visible unit and numeric alignment; custom focus border. Browser preview reproduces code-owned geometry.",
+      "nativeImplementation": "PixelField",
+      "html": "<label class=\"ds-field\">Width<span class=\"ds-field-box\"><input value=\"1200\" aria-label=\"Width, px\"><span>px</span></span></label>",
+      "css": ".ds-field { display: grid; gap: 5px; width: 140px; font: 11px system-ui; color: GrayText; } .ds-field-box { display: flex; align-items: center; gap: 3px; height: 28px; padding: 0 8px; background: Field; border-radius: 5px; box-shadow: inset 0 0 0 .5px color-mix(in srgb, CanvasText 18%, transparent); } .ds-field-box:focus-within { box-shadow: inset 0 0 0 2px AccentColor; } .ds-field input { min-width: 0; width: 100%; border: 0; background: transparent; color: FieldText; outline: 0; font: 13px system-ui; font-variant-numeric: tabular-nums; } .ds-field-box > span { font-size: 10px; } .ds-field input:hover { cursor: text; } .ds-field input:focus-visible { outline: none; }"
+    },
+    {
+      "name": "Format picker",
+      "kind": "custom",
+      "description": "Native PNG/JPG segmented picker. Browser radios approximate its selection state.",
+      "nativeImplementation": "Picker(\"Format\", selection: $model.format).pickerStyle(.segmented)",
+      "html": "<div class=\"ds-format\" role=\"group\" aria-label=\"Format\"><label><input type=\"radio\" name=\"ds-format\" checked><span>PNG</span></label><label><input type=\"radio\" name=\"ds-format\"><span>JPG</span></label></div>",
+      "css": ".ds-format { display: inline-flex; background: ButtonFace; border-radius: 5px; font: 13px system-ui; color: ButtonText; } .ds-format label { position: relative; cursor: default; } .ds-format input { position: absolute; opacity: 0; } .ds-format span { display: block; padding: 4px 10px; border-radius: 5px; } .ds-format input:checked + span { color: AccentColorText; background: AccentColor; } .ds-format label:hover span { filter: brightness(.98); } .ds-format input:focus-visible + span { outline: 2px solid AccentColor; outline-offset: 2px; }"
+    },
+    {
+      "name": "Canvas selection",
+      "kind": "custom",
+      "description": "Transparency checker with accent boundary and white corner handles. The placeholder frame represents geometry; user imagery is not a bundled design asset.",
+      "nativeImplementation": "EditorCanvas.draw",
+      "html": "<div class=\"ds-canvas\"><div class=\"ds-selection\" tabindex=\"0\" aria-label=\"Selected image frame\"><i></i><i></i><i></i><i></i></div></div>",
+      "css": ".ds-canvas { position: relative; width: 240px; height: 220px; background: repeating-conic-gradient(rgb(90% 90% 90%) 0 25%, rgb(98% 98% 98%) 0 50%) 0 0/20px 20px; box-shadow: 0 3px 14px rgb(0 0 0 / 16%); } .ds-selection { position: absolute; inset: 30px 60px; border: 1px solid color-mix(in srgb, AccentColor 80%, transparent); cursor: grab; } .ds-selection:active { cursor: grabbing; } .ds-selection:focus-visible { outline: 2px solid AccentColor; outline-offset: 3px; } .ds-selection i { position: absolute; width: 8px; height: 8px; background: white; border: 1px solid AccentColor; border-radius: 1.5px; transform: translate(-50%, -50%); } .ds-selection i:nth-child(1) { left: 0; top: 0; } .ds-selection i:nth-child(2) { left: 100%; top: 0; } .ds-selection i:nth-child(3) { left: 100%; top: 100%; } .ds-selection i:nth-child(4) { left: 0; top: 100%; } .ds-selection i:hover { cursor: crosshair; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Photographic Light Table",
+    "overview": "A quiet, precise Mac workbench lets the product image carry the visual weight. Neutral system surfaces, compact controls, and familiar Mac interactions keep attention on image boundaries, placement, and export settings.\n\nThis document records the built SwiftUI/AppKit system. The frontmatter's CSS-compatible lengths represent native layout points at 1×; its font stack is the portable equivalent of the macOS system font. Fixed checker values describe AppKit calibrated-white inputs. Dynamic system colors and native control metrics remain owned by macOS, rather than frozen to one screenshot.",
+    "keyCharacteristics": [
+      "Dominant image workspace with compact supporting controls.",
+      "Native system type, SF Symbols, and appearance-aware surfaces.",
+      "Explicit pixel units and stable numeric alignment.",
+      "Selection and transparency remain visually distinct."
+    ],
+    "rules": [
+      {
+        "name": "The Appearance Rule",
+        "body": "Keep interface colors semantic; image pixels and transparency indicators retain their own colors when macOS appearance changes.",
+        "section": "colors"
+      },
+      {
+        "name": "The Canvas Depth Rule",
+        "body": "Keep custom elevation concentrated on the image canvas; preserve native material behavior for dialogs and transient controls.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "**Do** use semantic macOS colors and native control states.",
+      "**Do** keep pixel units visible and numeric digits aligned.",
+      "**Do** distinguish transparency, selection, and alignment with their established treatments.",
+      "**Do** keep actionable fields and fixed export controls usable at the minimum window size."
+    ],
+    "donts": [
+      "**Don't** hard-code the reviewed blue accent as the app's permanent palette.",
+      "**Don't** replace native menus, dialogs, or SF Symbols with unrelated visual systems.",
+      "**Don't** render the checkerboard, selection outline, or alignment guides into exported images.",
+      "**Don't** turn helper labels into display typography."
+    ]
+  }
+}

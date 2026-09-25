@@ -1,0 +1,21 @@
+.build/
+dist/
+.DS_Store
+.impeccable/review/
+
+# Local credentials and signing material
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.cer
+*.mobileprovision
+*.provisionprofile
+
+# Local editor and SwiftPM state
+.swiftpm/
+*.xcuserstate
+xcuserdata/

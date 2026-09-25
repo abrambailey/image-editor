@@ -1,0 +1,28 @@
+BiRefNet Lite 1024 for Core ML
+Copyright 2026 miracle2k contributors
+
+This distribution contains a Core ML conversion of the official
+ZhengPeng7/BiRefNet_lite model by Peng Zheng et al., pinned to revision
+7838f1c3472f827cd8ce13ab5ccc2ce48077360f.
+
+Upstream model: https://huggingface.co/ZhengPeng7/BiRefNet_lite
+Upstream project: https://github.com/ZhengPeng7/BiRefNet
+
+The BiRefNet project and model are presented by their authors under the MIT
+License. The Hugging Face model card displays an MIT badge, although that model
+repository does not contain a separate license file. The upstream MIT notice is
+reproduced in LICENSE-BIREFNET.
+
+The conversion is adapted from imperatormk/coreml-birefnet, including its
+fixed-shape loader, deformable-convolution lowering, and rank-5 Swin rewrite:
+https://github.com/imperatormk/coreml-birefnet
+
+The prior-art MIT notice is reproduced in LICENSE-COREML-BIREFNET.
+
+Local modifications pin and verify the upstream source and weights, expose only
+the final mask logits, target iOS 17, provide separately validated FP32 and
+FP16-compute/FP32-I/O builds, add deterministic verification and packaging,
+and document the tested CPU-only runtime policy.
+
+This project is not affiliated with or endorsed by the BiRefNet authors,
+Hugging Face, Apple, or the prior-art project.
