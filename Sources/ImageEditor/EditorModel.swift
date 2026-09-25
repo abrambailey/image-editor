@@ -183,9 +183,11 @@ final class EditorModel: ObservableObject, Identifiable {
     }
     var scalePercent: Double {
         guard imageSize.width > 0 else { return 100 }
-        return document.frame.width / imageSize.width * 100
+        return Double(document.frame.width) / Double(imageSize.width) * 100
     }
-    var maximumPadding: Double { max(0, floor((min(document.canvas.width, document.canvas.height) - 1) / 2)) }
+    var maximumPadding: Double {
+        max(0, floor((Double(min(document.canvas.width, document.canvas.height)) - 1) / 2))
+    }
 
     private func checkpoint() {
         undoStack.append(document)
