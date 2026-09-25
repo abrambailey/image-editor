@@ -6,6 +6,8 @@ An experimental open-source app, distributed as source under the [MIT license](L
 Build it locally using the instructions below. Contributions and bug reports are
 welcome; see [CONTRIBUTING.md](CONTRIBUTING.md) for scope and support expectations.
 
+<img width="2464" height="1824" alt="image" src="https://github.com/user-attachments/assets/dd7d5805-543c-4e9e-921f-ec623ced57fd" />
+
 ## Run
 
 Requires macOS 14 or newer and Apple's Command Line Tools (`xcode-select --install`). The first build downloads an 82 MB model; background removal then runs entirely offline. No Python environment or server is needed. Optional Sunburst cloud editing requires your own OpenAI API key and API billing.
