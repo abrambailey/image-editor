@@ -1,6 +1,6 @@
 # Image Editor for Mac
 
-A small native app for preparing hearing-aid product images: remove the background, crop, size the canvas, set padding, arrange the product, and export.
+A small native app for images: remove the background, crop, size the canvas, set padding, and export.
 
 An experimental open-source app, distributed as source under the [MIT license](LICENSE).
 Build it locally using the instructions below. Contributions and bug reports are
