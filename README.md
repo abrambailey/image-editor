@@ -4,7 +4,7 @@ A lightweight, native image editor for macOS with layers, local background remov
 
 Free and open source under the [MIT license](LICENSE). Currently available to build from source.
 
-<img width="2464" height="1824" alt="image" src="https://github.com/user-attachments/assets/dd7d5805-543c-4e9e-921f-ec623ced57fd" />
+<img width="2578" height="2182" alt="image" src="https://github.com/user-attachments/assets/7530be65-0b07-4f69-b6b7-09f6d523e54d" />
 
 ## Features
 
