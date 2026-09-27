@@ -105,7 +105,15 @@ struct TestRunner {
             if beforeAlpha == failures { print("PASS AI transparency through generation, apply, PNG export and history") }
         } catch { fail("AI transparency workflow: \(error.localizedDescription)") }
         let layers = LayerTests()
+        let selections = SelectionTests()
+        let expansion = LayerExpansionTests()
         let layerTests: [(String, () async throws -> Void)] = [
+            ("layer expansion pixels, percentages, fill, alpha and limits", { try expansion.testExpansionPixelsAndLimits() }),
+            ("layer expansion scope, placement, crop, fit and Undo", expansion.testExpansionWorkflow),
+            ("layer pixel crop, fit, original, bounds and history", selections.testLayerCropAndFit),
+            ("rectangle and ellipse pixels, scale, clipping and orientation", { try selections.testSelectionPixels() }),
+            ("selection deletion, layer scope, transparency and history", selections.testSelectionHistoryAndScope),
+            ("selection PNG clipboard, placement and paste as layer", selections.testSelectionClipboard),
             ("layer import, selection, transforms, history and atomic failures", layers.testLayerWorkflow),
             ("composite order, visibility, export and alpha hit testing", { try layers.testCompositeRendering() }),
             ("paste choices, multiple files and separate documents", layers.testPasteChoicesAndSeparateDocuments),

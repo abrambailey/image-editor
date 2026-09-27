@@ -28,6 +28,58 @@ enum CanvasBackground: String, CaseIterable, Identifiable {
     }
 }
 
+enum PixelSelectionShape: String, CaseIterable {
+    case rectangle = "Rectangle", ellipse = "Ellipse"
+}
+
+struct PixelSelection {
+    var rect: CGRect // Canvas pixels, top-left origin.
+    var shape: PixelSelectionShape
+}
+
+enum LayerExpansionUnit: String, CaseIterable {
+    case pixels = "Pixels", percent = "Percent"
+    var suffix: String { self == .pixels ? "px" : "%" }
+}
+
+struct LayerExpansion {
+    var unit: LayerExpansionUnit = .pixels
+    var top: Double = 0
+    var right: Double = 0
+    var bottom: Double = 0
+    var left: Double = 0
+
+    struct Insets: Equatable {
+        let top: Int, right: Int, bottom: Int, left: Int
+        var isEmpty: Bool { top == 0 && right == 0 && bottom == 0 && left == 0 }
+        func expandedSize(_ size: CGSize) -> CGSize {
+            CGSize(width: size.width + CGFloat(left + right), height: size.height + CGFloat(top + bottom))
+        }
+    }
+
+    /// Percentages apply to each edge: left/right use width, top/bottom use height.
+    func pixelInsets(for size: CGSize) throws -> Insets {
+        func pixels(_ amount: Double, dimension: CGFloat) throws -> Int {
+            guard amount.isFinite, amount >= 0 else {
+                throw EditorError.message("Enter a number of 0 or more for each side.")
+            }
+            let value = (unit == .pixels ? amount : amount / 100 * dimension).rounded()
+            guard value.isFinite, value <= Double(ImageEngine.maxDimension) else {
+                throw EditorError.message("The expanded layer must be no larger than 8,192 × 8,192 px. Reduce the amounts.")
+            }
+            return Int(value)
+        }
+        let insets = try Insets(top: pixels(top, dimension: size.height), right: pixels(right, dimension: size.width),
+                                bottom: pixels(bottom, dimension: size.height), left: pixels(left, dimension: size.width))
+        let expanded = insets.expandedSize(size)
+        guard expanded.width >= 1, expanded.height >= 1,
+              expanded.width <= CGFloat(ImageEngine.maxDimension), expanded.height <= CGFloat(ImageEngine.maxDimension) else {
+            throw EditorError.message("The expanded layer must be no larger than 8,192 × 8,192 px. Reduce the amounts.")
+        }
+        return insets
+    }
+}
+
 enum ImageEngine {
     static let maxDimension = 8192
     static let maxDownloadBytes = 50 * 1024 * 1024
@@ -97,6 +149,85 @@ enum ImageEngine {
         let size = CGSize(width: imageSize.width * scale, height: imageSize.height * scale)
         return CGRect(x: (canvas.width - size.width) / 2, y: (canvas.height - size.height) / 2,
                       width: size.width, height: size.height)
+    }
+
+    static func imageRect(_ rect: CGRect, in layer: ImageLayer) -> CGRect {
+        CGRect(x: (rect.minX - layer.frame.minX) * CGFloat(layer.image.width) / layer.frame.width,
+               y: (rect.minY - layer.frame.minY) * CGFloat(layer.image.height) / layer.frame.height,
+               width: rect.width * CGFloat(layer.image.width) / layer.frame.width,
+               height: rect.height * CGFloat(layer.image.height) / layer.frame.height)
+    }
+
+    static func canvasRect(_ rect: CGRect, in layer: ImageLayer) -> CGRect {
+        CGRect(x: layer.frame.minX + rect.minX * layer.frame.width / CGFloat(layer.image.width),
+               y: layer.frame.minY + rect.minY * layer.frame.height / CGFloat(layer.image.height),
+               width: rect.width * layer.frame.width / CGFloat(layer.image.width),
+               height: rect.height * layer.frame.height / CGFloat(layer.image.height))
+    }
+
+    /// Include every touched source pixel, without floating-point roundoff adding an edge.
+    static func pixelBounds(_ rect: CGRect, in image: CGImage) -> CGRect {
+        let left = floor(rect.minX + 0.000001), top = floor(rect.minY + 0.000001)
+        let right = ceil(rect.maxX - 0.000001), bottom = ceil(rect.maxY - 0.000001)
+        return CGRect(x: left, y: top, width: max(0, right - left), height: max(0, bottom - top))
+            .intersection(CGRect(x: 0, y: 0, width: image.width, height: image.height))
+    }
+
+    /// Copy only this layer at source resolution, retaining transparent ellipse corners.
+    static func copySelection(_ selection: PixelSelection, from layer: ImageLayer) throws -> (image: CGImage, frame: CGRect) {
+        let local = imageRect(selection.rect, in: layer)
+        let pixels = pixelBounds(local, in: layer.image)
+        guard !pixels.isNull, !pixels.isEmpty, let cropped = layer.image.cropping(to: pixels) else {
+            throw EditorError.message("The selection doesn’t overlap this layer. Draw over the selected layer.")
+        }
+        if selection.shape == .rectangle { return (cropped, canvasRect(pixels, in: layer)) }
+        let context = try context(width: cropped.width, height: cropped.height)
+        let shape = local.offsetBy(dx: -pixels.minX, dy: -pixels.minY)
+        // Quartz draws bottom-up, while the selection is measured from the top-left.
+        context.addEllipse(in: CGRect(x: shape.minX, y: pixels.height - shape.maxY, width: shape.width, height: shape.height))
+        context.clip()
+        context.draw(cropped, in: CGRect(origin: .zero, size: pixels.size))
+        guard let image = context.makeImage() else { throw EditorError.message("Couldn’t copy the selection.") }
+        return (image, canvasRect(pixels, in: layer))
+    }
+
+    static func deletingSelection(_ selection: PixelSelection, from layer: ImageLayer) throws -> CGImage {
+        let local = imageRect(selection.rect, in: layer)
+        let pixels = pixelBounds(local, in: layer.image)
+        guard !pixels.isNull, !pixels.isEmpty else {
+            throw EditorError.message("The selection doesn’t overlap this layer. Draw over the selected layer.")
+        }
+        let context = try context(width: layer.image.width, height: layer.image.height)
+        context.draw(layer.image, in: CGRect(x: 0, y: 0, width: layer.image.width, height: layer.image.height))
+        let shape = selection.shape == .rectangle ? pixels : local
+        let quartz = CGRect(x: shape.minX, y: CGFloat(layer.image.height) - shape.maxY, width: shape.width, height: shape.height)
+        context.setBlendMode(.destinationOut)
+        context.setFillColor(CGColor(gray: 0, alpha: 1))
+        if selection.shape == .ellipse { context.fillEllipse(in: quartz) }
+        else { context.fill(quartz) }
+        guard let image = context.makeImage() else { throw EditorError.message("Couldn’t delete the selection.") }
+        return image
+    }
+
+    static func expanded(_ image: CGImage, by expansion: LayerExpansion, fill: CGColor?) throws -> CGImage {
+        let sourceSize = CGSize(width: image.width, height: image.height)
+        let insets = try expansion.pixelInsets(for: sourceSize)
+        guard !insets.isEmpty else { return image }
+        let size = insets.expandedSize(sourceSize)
+        let context = try context(width: Int(size.width), height: Int(size.height))
+        let sourceRect = CGRect(x: CGFloat(insets.left), y: CGFloat(insets.bottom), width: sourceSize.width, height: sourceSize.height)
+        if let fill {
+            // Only the new border is filled; transparency inside the source stays intact.
+            context.setFillColor(fill)
+            context.addRect(CGRect(origin: .zero, size: size))
+            context.addRect(sourceRect)
+            context.drawPath(using: .eoFill)
+        }
+        context.interpolationQuality = .none
+        context.setBlendMode(.copy)
+        context.draw(image, in: sourceRect)
+        guard let result = context.makeImage() else { throw EditorError.message("Couldn’t expand the layer. Try smaller amounts.") }
+        return result
     }
 
     static func removeBackground(from image: CGImage) throws -> CGImage {

@@ -18,6 +18,10 @@ struct PreviewImageEditor: AIImageEditing {
 @main
 struct UISmoke {
     @MainActor static func main() {
+        DispatchQueue.global().asyncAfter(deadline: .now() + 60) {
+            fputs("FAIL native UI test timed out\n", stderr)
+            exit(1)
+        }
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
         let model = EditorModel()
@@ -339,6 +343,279 @@ struct UISmoke {
                 check(window.sheets.isEmpty, "paste sheet dismisses")
                 window.makeFirstResponder(canvas)
                 print("PASS native layer selection, drag, proportional resize, undo and paste choice sheet")
+            }
+            if CommandLine.arguments.contains("--pixel-tools") {
+                @MainActor func check(_ value: Bool, _ message: String) {
+                    guard value else { print("FAIL pixel tools: \(message)"); exit(1) }
+                }
+                @MainActor func findCanvas(_ view: NSView) -> EditorCanvas? {
+                    if let canvas = view as? EditorCanvas { return canvas }
+                    return view.subviews.lazy.compactMap(findCanvas).first
+                }
+                guard let canvas = findCanvas(host), model.hasImage else { exit(1) }
+                @MainActor func mouse(_ type: NSEvent.EventType, _ point: CGPoint, shift: Bool = false) -> NSEvent {
+                    let bounds = CGRect(origin: .zero, size: model.document.canvas)
+                    let preview = model.isCropping && model.cropTarget == .layer ? bounds.union(model.cropBounds) : bounds
+                    let scale = min((canvas.bounds.width - 96) / preview.width, (canvas.bounds.height - 100) / preview.height) * model.zoom
+                    let location = CGPoint(x: (canvas.bounds.width - preview.width * scale) / 2 + (point.x - preview.minX) * scale,
+                                           y: (canvas.bounds.height - preview.height * scale) / 2 + (point.y - preview.minY) * scale)
+                    return NSEvent.mouseEvent(with: type, location: canvas.convert(location, to: nil), modifierFlags: shift ? [.shift] : [],
+                                              timestamp: 0, windowNumber: window.windowNumber, context: nil,
+                                              eventNumber: 0, clickCount: 1, pressure: 1)!
+                }
+                @MainActor func drag(_ start: CGPoint, _ end: CGPoint, shift: Bool = false) {
+                    canvas.mouseDown(with: mouse(.leftMouseDown, start, shift: shift))
+                    canvas.mouseDragged(with: mouse(.leftMouseDragged, end, shift: shift))
+                    canvas.mouseUp(with: mouse(.leftMouseUp, end, shift: shift))
+                }
+                @MainActor func key(_ code: UInt16) {
+                    canvas.keyDown(with: NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                                                          windowNumber: window.windowNumber, context: nil, characters: "",
+                                                          charactersIgnoringModifiers: "", isARepeat: false, keyCode: code)!)
+                }
+                model.fitAndCenter()
+                let before = model.document
+                model.startLayerCrop()
+                try? await Task.sleep(nanoseconds: 150_000_000)
+                let frame = before.frame
+                drag(CGPoint(x: frame.minX + frame.width * 0.2, y: frame.minY + frame.height * 0.15),
+                     CGPoint(x: frame.minX + frame.width * 0.8, y: frame.minY + frame.height * 0.85))
+                check(model.cropPixelRect!.width < CGFloat(before.image!.width), "layer crop drawn at source scale")
+                try? await Task.sleep(nanoseconds: 150_000_000)
+                capture("--capture-layer-crop")
+                let expected = model.cropPixelRect!
+                key(36)
+                check(model.document.image!.width == Int(expected.width), "Return trims layer pixels")
+                check(model.document.canvas == before.canvas, "layer crop preserves canvas")
+                model.fitAndCenter()
+                check(abs(model.document.frame.width / model.document.frame.height - expected.width / expected.height) < 0.001,
+                      "Fit & Center uses cropped aspect ratio")
+                model.undo(); model.undo()
+                check(model.document.image === before.image, "Undo restores layer pixels")
+                model.setSelectionTool(.rectangle)
+                let visible = frame.intersection(CGRect(origin: .zero, size: before.canvas))
+                let start = CGPoint(x: visible.midX - 80, y: visible.midY - 60)
+                drag(start, CGPoint(x: start.x + 160, y: start.y + 120))
+                check(model.pixelSelection?.shape == .rectangle, "rectangle tool")
+                check(abs(model.pixelSelection!.rect.width - 160) < 0.001, "rectangle width")
+                let oldPixels = try! ImageEngine.encode(model.document.image!, format: .png, quality: 1)
+                key(51)
+                check(model.document.layers.count == before.layers.count, "Delete retains layer")
+                check(try! ImageEngine.encode(model.document.image!, format: .png, quality: 1) != oldPixels, "Delete erases selected pixels")
+                model.undo()
+                check(model.document.image === before.image, "Undo restores deleted pixels")
+                model.setSelectionTool(.ellipse)
+                drag(CGPoint(x: visible.midX + 100, y: visible.midY + 80),
+                     CGPoint(x: visible.midX - 100, y: visible.midY - 60), shift: true)
+                check(abs(model.pixelSelection!.rect.width - model.pixelSelection!.rect.height) < 0.001, "Shift reverse drag draws a circle")
+                try? await Task.sleep(nanoseconds: 150_000_000)
+                capture("--capture-selection")
+                // Preserve the user's clipboard while exercising the real responder chain.
+                let previousClipboard = NSPasteboard.general.pasteboardItems?.map { source -> NSPasteboardItem in
+                    let item = NSPasteboardItem()
+                    for type in source.types { if let data = source.data(forType: type) { item.setData(data, forType: type) } }
+                    return item
+                } ?? []
+                NSApp.activate(ignoringOtherApps: true)
+                window.makeKeyAndOrderFront(nil); window.makeMain()
+                try? await Task.sleep(nanoseconds: 200_000_000)
+                check(window.makeFirstResponder(canvas), "canvas accepts keyboard focus")
+                check(NSApp.sendAction(#selector(EditorCanvas.copy(_:)), to: nil, from: nil), "Copy routes to canvas (key window: \(window.isKeyWindow))")
+                check(NSApp.sendAction(#selector(EditorCanvas.paste(_:)), to: nil, from: nil), "Paste routes to canvas")
+                check(model.pendingImport == nil && model.document.layers.count == before.layers.count + 1, "selection pastes directly as a new layer")
+                NSPasteboard.general.clearContents()
+                if !previousClipboard.isEmpty { NSPasteboard.general.writeObjects(previousClipboard) }
+                model.undo()
+                model.setSelectionTool(.rectangle)
+                key(51)
+                check(model.document.layers.count == before.layers.count, "empty selection Delete is safe")
+                key(53)
+                check(!model.isSelecting, "Escape returns to Move")
+                // Cropping a layer outside the canvas remains reachable at fit zoom.
+                model.setPosition(x: -frame.width / 2, y: -frame.height / 4)
+                model.startLayerCrop()
+                let offscreen = model.document.frame
+                drag(CGPoint(x: offscreen.minX + offscreen.width * 0.1, y: offscreen.minY + offscreen.height * 0.1),
+                     CGPoint(x: offscreen.midX, y: offscreen.midY))
+                check(model.cropRect!.minX < 0, "crop can keep pixels outside canvas")
+                key(53); model.undo()
+                try? await Task.sleep(nanoseconds: 150_000_000)
+                print("PASS native layer crop, crop then fit, rectangle/circle, Delete, clipboard responder routing, paste, Undo and off-canvas crop")
+            }
+            if CommandLine.arguments.contains("--layer-expansion") {
+                @MainActor func check(_ value: Bool, _ message: String) {
+                    guard value else { print("FAIL layer expansion UI: \(message)"); exit(1) }
+                }
+                @MainActor func settle() async { try? await Task.sleep(nanoseconds: 200_000_000) }
+                @MainActor func click(_ point: CGPoint, in view: NSView) {
+                    guard let window = view.window else { exit(1) }
+                    window.makeKeyAndOrderFront(nil)
+                    let location = view.convert(point, to: nil)
+                    for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                        let event = NSEvent.mouseEvent(with: type, location: location, modifierFlags: [],
+                            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                            context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0)!
+                        NSApp.postEvent(event, atStart: false)
+                    }
+                }
+                @MainActor func press(_ label: String, in view: NSView) {
+                    if let native = controls(view, NSButton.self).first(where: { $0.title == label }) {
+                        native.performClick(nil)
+                        return
+                    }
+                    if label == "Expand Layer" || label == "Cancel", let sheet = view.window {
+                        let code: UInt16 = label == "Expand Layer" ? 36 : 53
+                        let chars = label == "Expand Layer" ? "\r" : "\u{1b}"
+                        let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                            windowNumber: sheet.windowNumber, context: nil, characters: chars,
+                            charactersIgnoringModifiers: chars, isARepeat: false, keyCode: code)!
+                        _ = sheet.performKeyEquivalent(with: event)
+                        return
+                    }
+                    if label.hasPrefix("Expand layer ") {
+                        // First row's expand icon, beside crop and visibility.
+                        let point = CGPoint(x: view.bounds.width - 83, y: view.isFlipped ? 94 : view.bounds.height - 94)
+                        click(point, in: view)
+                        return
+                    }
+                    let buttons = controls(view, NSView.self).filter { String(describing: type(of: $0)) == "SwiftUIAppKitButton" }
+                    let button: NSView?
+                    switch label {
+                    case "Move layer": button = buttons.first
+                    case "Rectangle selection": button = buttons.dropFirst().first
+                    case "Ellipse selection": button = buttons.dropFirst(2).first
+                    case "Expand Layer": button = buttons.last
+                    case "Cancel": button = buttons.dropLast().last
+                    default: button = nil
+                    }
+                    guard let button else { print("FAIL missing native button: \(label)"); exit(1) }
+                    click(CGPoint(x: button.bounds.midX, y: button.bounds.midY), in: button)
+                }
+                @MainActor func controls<T: NSView>(_ view: NSView, _ type: T.Type) -> [T] {
+                    ((view as? T).map { [$0] } ?? []) + view.subviews.flatMap { controls($0, type) }
+                }
+                @MainActor func choose(_ label: String, in view: NSView) {
+                    for control in controls(view, NSSegmentedControl.self) {
+                        if let segment = (0..<control.segmentCount).first(where: { control.label(forSegment: $0) == label }) {
+                            control.selectedSegment = segment
+                            check(control.sendAction(control.action, to: control.target), "choose \(label)")
+                            return
+                        }
+                    }
+                    print("FAIL missing segment: \(label)"); exit(1)
+                }
+                @MainActor func edit(_ label: String, _ value: String, in view: NSView) async {
+                    guard let field = fields(view).first(where: { $0.placeholderString == label }) else {
+                        print("FAIL missing expansion field: \(label)"); exit(1)
+                    }
+                    view.window?.makeFirstResponder(field)
+                    field.stringValue = value
+                    field.delegate?.controlTextDidChange?(Notification(name: NSControl.textDidChangeNotification, object: field))
+                    await settle()
+                }
+                model.fitAndCenter()
+                let before = model.document, history = model.undoStack.count
+                press("Rectangle selection", in: host)
+                await settle()
+                check(model.selectionTool == .rectangle, "rectangle icon selects tool")
+                press("Ellipse selection", in: host)
+                await settle()
+                check(model.selectionTool == .ellipse, "ellipse icon selects tool")
+                press("Move layer", in: host)
+                await settle()
+                check(!model.isSelecting, "hand icon returns to Move")
+                let layer = model.document.selectedLayer!
+                press("Expand layer \(layer.name)", in: host)
+                await settle()
+                guard let sheet = window.attachedSheet, let content = sheet.contentView else {
+                    print("FAIL expansion sheet missing"); exit(1)
+                }
+                check(model.layerExpansion?.id == layer.id, "row expand button targets its layer")
+                await edit("Each side", "12.5", in: content)
+                choose("Percent", in: content)
+                await settle()
+                press("Expand Layer", in: content)
+                await settle()
+                let insetX = Int((CGFloat(layer.image.width) * 0.125).rounded())
+                let insetY = Int((CGFloat(layer.image.height) * 0.125).rounded())
+                check(model.document.image!.width == layer.image.width + insetX * 2, "all sides percentage width")
+                check(model.document.image!.height == layer.image.height + insetY * 2, "all sides percentage height")
+                check(model.document.canvas == before.canvas, "expansion leaves canvas unchanged")
+                check(model.undoStack.count == history + 1, "expansion is one Undo step")
+                model.undo()
+                check(model.document.image === before.image && model.document.frame == before.frame, "Undo restores expansion")
+                await settle()
+                press("Expand layer \(layer.name)", in: host)
+                await settle()
+                guard let content = window.attachedSheet?.contentView else { exit(1) }
+                choose("Individual sides", in: content)
+                await settle()
+                for (label, value) in [("Top", "10"), ("Bottom", "30"), ("Left", "40"), ("Right", "20")] {
+                    await edit(label, value, in: content)
+                }
+                choose("Color", in: content)
+                await settle()
+                guard let colorWell = controls(content, NSColorWell.self).first else {
+                    print("FAIL custom color well missing"); exit(1)
+                }
+                colorWell.color = NSColor(srgbRed: 0.2, green: 0.5, blue: 0.8, alpha: 1)
+                check(colorWell.sendAction(colorWell.action, to: colorWell.target), "custom color action")
+                await settle()
+                if let index = CommandLine.arguments.firstIndex(of: "--capture-expansion"), let target = model.layerExpansion {
+                    // AppKit's sheet bitmap omits compositor surfaces. Capture the
+                    // same view in a direct host, with the same native field edits.
+                    let preview = NSHostingView(rootView: LayerExpansionSheet(model: model, target: target)
+                        .background(Color(nsColor: .windowBackgroundColor)))
+                    let previewWindow = NSWindow(contentRect: CGRect(origin: .zero, size: preview.fittingSize),
+                                                 styleMask: [.borderless], backing: .buffered, defer: false)
+                    previewWindow.isReleasedWhenClosed = false
+                    previewWindow.contentView = preview
+                    previewWindow.orderFront(nil)
+                    await settle()
+                    choose("Individual sides", in: preview)
+                    await settle()
+                    for (label, value) in [("Top", "10"), ("Bottom", "30"), ("Left", "40"), ("Right", "20")] {
+                        await edit(label, value, in: preview)
+                    }
+                    choose("Color", in: preview)
+                    await settle()
+                    if let previewWell = controls(preview, NSColorWell.self).first {
+                        previewWell.color = colorWell.color
+                        _ = previewWell.sendAction(previewWell.action, to: previewWell.target)
+                    }
+                    previewWindow.setContentSize(preview.fittingSize)
+                    await settle()
+                    if let bitmap = preview.bitmapImageRepForCachingDisplay(in: preview.bounds) {
+                        preview.cacheDisplay(in: preview.bounds, to: bitmap)
+                        try? bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: CommandLine.arguments[index + 1]))
+                    }
+                    previewWindow.close()
+                    content.window?.makeKeyAndOrderFront(nil)
+                }
+                press("Expand Layer", in: content)
+                await settle()
+                check(model.document.image!.width == layer.image.width + 60, "individual pixel width")
+                check(model.document.image!.height == layer.image.height + 40, "individual pixel height")
+                check(abs(model.document.frame.minX - (before.frame.minX - 40 * before.frame.width / CGFloat(layer.image.width))) < 0.001,
+                      "existing pixels keep placement")
+                let context = try! ImageEngine.context(width: model.document.image!.width, height: model.document.image!.height)
+                context.draw(model.document.image!, in: CGRect(x: 0, y: 0, width: context.width, height: context.height))
+                let bytes = context.data!.assumingMemoryBound(to: UInt8.self)
+                check(abs(Int(bytes[0]) - 51) <= 1 && abs(Int(bytes[1]) - 128) <= 1 && abs(Int(bytes[2]) - 204) <= 1,
+                      "custom border color reaches pixels")
+                model.undo()
+                await settle()
+                press("Expand layer \(layer.name)", in: host)
+                await settle()
+                guard let cancelContent = window.attachedSheet?.contentView else { exit(1) }
+                await edit("Each side", "9000", in: cancelContent)
+                press("Expand Layer", in: cancelContent)
+                await settle()
+                check(model.layerExpansion != nil && model.document.image === before.image, "oversize expansion cannot be applied")
+                press("Cancel", in: cancelContent)
+                await settle()
+                check(model.layerExpansion == nil && model.document.image === before.image, "Cancel keeps image")
+                print("PASS native icon tools, expansion sheet, percentages, individual pixels, custom color, validation, Cancel and Undo")
             }
             capture("--capture")
             app.terminate(nil)

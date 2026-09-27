@@ -15,6 +15,7 @@ struct CanvasView: NSViewRepresentable {
         view.needsDisplay = true
         view.setAccessibilityHelp(model.isCropping
             ? "Crop selection. Drag to select, drag inside to move, or drag an edge to resize. Arrow keys move the selection. Return applies; Escape cancels. Exact crop dimensions are available in the inspector."
+            : model.isSelecting ? "Draw a selection on the selected layer. Hold Shift for a square or circle. Delete erases selected pixels, Command-C copies, Command-V pastes a new layer, Escape deselects."
             : "Click a layer to select it; drag to move it. Drag a corner to resize. Arrow keys move one pixel; Shift and arrow move ten pixels.")
         view.window?.invalidateCursorRects(for: view)
     }
@@ -27,6 +28,7 @@ final class EditorCanvas: NSView, NSUserInterfaceValidations {
     private var activeCorner: Int?
     private enum CropDrag { case select, move, resize(Int) }
     private var cropDrag: CropDrag?
+    private var selectionDrag = false
     private var snapX = false
     private var snapY = false
     private var dropHighlighted = false
@@ -46,15 +48,22 @@ final class EditorCanvas: NSView, NSUserInterfaceValidations {
 
     private var displayScale: CGFloat {
         guard let model else { return 1 }
-        return max(0.001, min((bounds.width - 96) / model.document.canvas.width,
-                             (bounds.height - 100) / model.document.canvas.height)) * model.zoom
+        return max(0.001, min((bounds.width - 96) / previewBounds.width,
+                             (bounds.height - 100) / previewBounds.height)) * model.zoom
+    }
+
+    private var previewBounds: CGRect {
+        guard let model else { return .zero }
+        let canvas = CGRect(origin: .zero, size: model.document.canvas)
+        return model.isCropping && model.cropTarget == .layer ? canvas.union(model.cropBounds) : canvas
     }
 
     private var canvasRect: CGRect {
         guard let model else { return .zero }
         let size = CGSize(width: model.document.canvas.width * displayScale,
                           height: model.document.canvas.height * displayScale)
-        return CGRect(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2,
+        return CGRect(x: (bounds.width - previewBounds.width * displayScale) / 2 - previewBounds.minX * displayScale,
+                      y: (bounds.height - previewBounds.height * displayScale) / 2 - previewBounds.minY * displayScale,
                       width: size.width, height: size.height)
     }
 
@@ -76,15 +85,17 @@ final class EditorCanvas: NSView, NSUserInterfaceValidations {
 
     private func canvasPoint(_ point: CGPoint) -> CGPoint {
         guard let model else { return .zero }
-        return CGPoint(x: min(model.document.canvas.width, max(0, (point.x - canvasRect.minX) / displayScale)),
-                       y: min(model.document.canvas.height, max(0, (point.y - canvasRect.minY) / displayScale)))
+        let limit = model.isCropping ? model.cropBounds : CGRect(origin: .zero, size: model.document.canvas)
+        return CGPoint(x: min(limit.maxX, max(limit.minX, (point.x - canvasRect.minX) / displayScale)),
+                       y: min(limit.maxY, max(limit.minY, (point.y - canvasRect.minY) / displayScale)))
     }
 
     private func drawCrop(_ crop: CGRect) {
         let rect = screenRect(crop)
         NSGraphicsContext.saveGraphicsState()
-        NSBezierPath(rect: canvasRect).addClip()
-        let shade = NSBezierPath(rect: canvasRect)
+        let area = model.map { screenRect($0.cropBounds) } ?? canvasRect
+        NSBezierPath(rect: area).addClip()
+        let shade = NSBezierPath(rect: area)
         shade.append(NSBezierPath(rect: rect))
         shade.windingRule = .evenOdd
         NSColor.black.withAlphaComponent(0.5).setFill()
@@ -112,6 +123,17 @@ final class EditorCanvas: NSView, NSUserInterfaceValidations {
             NSColor.white.setFill(); handle.fill()
             NSColor.controlAccentColor.setStroke(); handle.stroke()
         }
+    }
+
+    private func drawSelection(_ selection: PixelSelection) {
+        let rect = screenRect(selection.rect)
+        let outline = selection.shape == .ellipse ? NSBezierPath(ovalIn: rect) : NSBezierPath(rect: rect)
+        NSColor.black.setStroke()
+        outline.lineWidth = 2; outline.stroke()
+        NSColor.white.setStroke()
+        outline.lineWidth = 1
+        outline.setLineDash([5, 5], count: 2, phase: 0)
+        outline.stroke()
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -159,6 +181,9 @@ final class EditorCanvas: NSView, NSUserInterfaceValidations {
             }
         }
         for layer in model.document.layers where layer.isVisible {
+            // The crop preview draws its target once above the stack, including
+            // off-canvas pixels. Drawing it twice would change translucent colors.
+            if model.isCropping && model.cropTarget == .layer && layer.id == model.document.selectedLayerID { continue }
             let cgImage = layer.image
             let image = NSImage(cgImage: cgImage, size: CGSize(width: cgImage.width, height: cgImage.height))
             image.draw(in: screenRect(layer.frame), from: .zero, operation: .sourceOver,
@@ -175,7 +200,15 @@ final class EditorCanvas: NSView, NSUserInterfaceValidations {
         NSGraphicsContext.restoreGraphicsState()
 
         if let crop = model.cropRect {
+            // Layer cropping also exposes pixels currently outside the canvas.
+            if model.cropTarget == .layer, let layer = model.document.selectedLayer {
+                let image = NSImage(cgImage: layer.image, size: .zero)
+                image.draw(in: screenRect(layer.frame), from: .zero, operation: .sourceOver,
+                           fraction: 1, respectFlipped: true, hints: [.interpolation: NSImageInterpolation.high])
+            }
             drawCrop(crop)
+        } else if let selection = model.pixelSelection {
+            drawSelection(selection)
         } else if model.canEditLayer {
             let frame = screenRect(model.document.frame)
             NSColor.controlAccentColor.withAlphaComponent(0.8).setStroke()
@@ -190,10 +223,12 @@ final class EditorCanvas: NSView, NSUserInterfaceValidations {
             }
         }
         let label = "\(Int(model.document.canvas.width)) × \(Int(model.document.canvas.height)) px"
-        label.draw(at: CGPoint(x: canvas.minX, y: canvas.minY - 23), withAttributes: [
+        let labelAttributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular),
             .foregroundColor: NSColor.secondaryLabelColor
-        ])
+        ]
+        label.draw(at: CGPoint(x: canvas.maxX - label.size(withAttributes: labelAttributes).width, y: canvas.minY - 23),
+                   withAttributes: labelAttributes)
         if dropHighlighted {
             NSColor.controlAccentColor.setStroke()
             let outline = NSBezierPath(roundedRect: bounds.insetBy(dx: 6, dy: 6), xRadius: 8, yRadius: 8)
@@ -203,9 +238,9 @@ final class EditorCanvas: NSView, NSUserInterfaceValidations {
 
     override func resetCursorRects() {
         if let model, !model.isBusy, let crop = model.cropRect {
-            addVisibleCursorRect(canvasRect, cursor: .crosshair)
+            addVisibleCursorRect(screenRect(model.cropBounds), cursor: .crosshair)
             let rect = screenRect(crop)
-            if crop != CGRect(origin: .zero, size: model.document.canvas) {
+            if crop != model.cropBounds {
                 addVisibleCursorRect(rect, cursor: .openHand)
             }
             for (index, point) in cropHandles(rect).enumerated() {
@@ -216,6 +251,10 @@ final class EditorCanvas: NSView, NSUserInterfaceValidations {
             return
         }
         guard let model, model.canEdit else { return }
+        if model.isSelecting {
+            addVisibleCursorRect(canvasRect, cursor: .crosshair)
+            return
+        }
         for layer in model.document.layers where layer.isVisible {
             addVisibleCursorRect(screenRect(layer.frame).intersection(canvasRect), cursor: .openHand)
         }
@@ -241,10 +280,10 @@ final class EditorCanvas: NSView, NSUserInterfaceValidations {
             let rect = screenRect(crop)
             if let handle = cropHandles(rect).firstIndex(where: { abs($0.x - point.x) <= 9 && abs($0.y - point.y) <= 9 }) {
                 cropDrag = .resize(handle)
-            } else if rect.contains(point), crop != CGRect(origin: .zero, size: model.document.canvas) {
+            } else if rect.contains(point), crop != model.cropBounds {
                 cropDrag = .move
                 NSCursor.closedHand.set()
-            } else if canvasRect.contains(point) {
+            } else if screenRect(model.cropBounds).contains(point) {
                 cropDrag = .select
             } else { return }
             dragOrigin = canvasPoint(point)
@@ -253,6 +292,13 @@ final class EditorCanvas: NSView, NSUserInterfaceValidations {
         }
         guard let model, model.canEdit else { return }
         let point = convert(event.locationInWindow, from: nil)
+        if model.isSelecting {
+            guard model.canSelectPixels, canvasRect.contains(point) else { return }
+            selectionDrag = true
+            dragOrigin = canvasPoint(point)
+            model.updateSelection(.zero)
+            return
+        }
         let frame = screenRect(model.document.frame)
         activeCorner = model.canEditLayer ? corners(frame).firstIndex { abs($0.x - point.x) <= 9 && abs($0.y - point.y) <= 9 } : nil
         if activeCorner == nil {
@@ -267,6 +313,17 @@ final class EditorCanvas: NSView, NSUserInterfaceValidations {
     }
 
     override func mouseDragged(with event: NSEvent) {
+        if let model, selectionDrag, let start = dragOrigin {
+            let point = canvasPoint(convert(event.locationInWindow, from: nil))
+            var dx = point.x - start.x, dy = point.y - start.y
+            if event.modifierFlags.contains(.shift) {
+                let side = min(abs(dx), abs(dy))
+                dx = dx < 0 ? -side : side; dy = dy < 0 ? -side : side
+            }
+            model.updateSelection(CGRect(x: min(start.x, start.x + dx), y: min(start.y, start.y + dy),
+                                         width: abs(dx), height: abs(dy)))
+            return
+        }
         if let model, let cropDrag, let start = dragOrigin {
             let point = canvasPoint(convert(event.locationInWindow, from: nil))
             var rect = originalFrame
@@ -279,10 +336,13 @@ final class EditorCanvas: NSView, NSUserInterfaceValidations {
             case .resize(let handle):
                 let dx = point.x - start.x, dy = point.y - start.y
                 var left = rect.minX, right = rect.maxX, top = rect.minY, bottom = rect.maxY
-                if [0, 3, 7].contains(handle) { left = min(right - 1, max(0, left + dx)) }
-                if [1, 2, 5].contains(handle) { right = max(left + 1, min(model.document.canvas.width, right + dx)) }
-                if [0, 1, 4].contains(handle) { top = min(bottom - 1, max(0, top + dy)) }
-                if [2, 3, 6].contains(handle) { bottom = max(top + 1, min(model.document.canvas.height, bottom + dy)) }
+                let limit = model.cropBounds
+                let minWidth = limit.width / model.cropPixelSize.width
+                let minHeight = limit.height / model.cropPixelSize.height
+                if [0, 3, 7].contains(handle) { left = min(right - minWidth, max(limit.minX, left + dx)) }
+                if [1, 2, 5].contains(handle) { right = max(left + minWidth, min(limit.maxX, right + dx)) }
+                if [0, 1, 4].contains(handle) { top = min(bottom - minHeight, max(limit.minY, top + dy)) }
+                if [2, 3, 6].contains(handle) { bottom = max(top + minHeight, min(limit.maxY, bottom + dy)) }
                 rect = CGRect(x: left, y: top, width: right - left, height: bottom - top)
             }
             model.updateCrop(rect)
@@ -318,7 +378,8 @@ final class EditorCanvas: NSView, NSUserInterfaceValidations {
     }
 
     override func mouseUp(with event: NSEvent) {
-        if dragOrigin != nil && cropDrag == nil { model?.endGesture() }
+        if dragOrigin != nil && cropDrag == nil && !selectionDrag { model?.endGesture() }
+        selectionDrag = false
         cropDrag = nil
         dragOrigin = nil; activeCorner = nil; snapX = false; snapY = false
         needsDisplay = true
@@ -341,19 +402,37 @@ final class EditorCanvas: NSView, NSUserInterfaceValidations {
     override func keyDown(with event: NSEvent) {
         let delta: CGFloat = event.modifierFlags.contains(.shift) ? 10 : 1
         if let model, let crop = model.cropRect {
+            let dx = delta * model.cropBounds.width / model.cropPixelSize.width
+            let dy = delta * model.cropBounds.height / model.cropPixelSize.height
             switch event.keyCode {
             case 36, 76: model.applyCrop()
             case 53: model.cancelCrop()
-            case 123: model.updateCrop(crop.offsetBy(dx: -delta, dy: 0))
-            case 124: model.updateCrop(crop.offsetBy(dx: delta, dy: 0))
-            case 125: model.updateCrop(crop.offsetBy(dx: 0, dy: delta))
-            case 126: model.updateCrop(crop.offsetBy(dx: 0, dy: -delta))
+            case 123: model.updateCrop(crop.offsetBy(dx: -dx, dy: 0))
+            case 124: model.updateCrop(crop.offsetBy(dx: dx, dy: 0))
+            case 125: model.updateCrop(crop.offsetBy(dx: 0, dy: dy))
+            case 126: model.updateCrop(crop.offsetBy(dx: 0, dy: -dy))
+            default: super.keyDown(with: event)
+            }
+            return
+        }
+        if let model, model.isSelecting {
+            switch event.keyCode {
+            case 53: model.setSelectionTool(nil)
+            case 51, 117: model.deleteSelection()
+            case 123...126:
+                if var rect = model.pixelSelection?.rect {
+                    let dx: CGFloat = event.keyCode == 123 ? -delta : event.keyCode == 124 ? delta : 0
+                    let dy: CGFloat = event.keyCode == 126 ? -delta : event.keyCode == 125 ? delta : 0
+                    rect.origin.x = min(model.document.canvas.width - rect.width, max(0, rect.minX + dx))
+                    rect.origin.y = min(model.document.canvas.height - rect.height, max(0, rect.minY + dy))
+                    model.updateSelection(rect)
+                }
             default: super.keyDown(with: event)
             }
             return
         }
         switch event.keyCode {
-        case 51, 117: model?.deleteLayer()
+        case 51, 117: model?.deleteFromCanvas()
         case 123: model?.nudge(dx: -delta, dy: 0)
         case 124: model?.nudge(dx: delta, dy: 0)
         case 125: model?.nudge(dx: 0, dy: delta)
@@ -364,12 +443,12 @@ final class EditorCanvas: NSView, NSUserInterfaceValidations {
 
     // Let the native Copy command follow focus: the canvas copies pixels,
     // while text fields keep their normal selected-text behavior.
-    @objc func copy(_ sender: Any?) { model?.exportImage(copy: true) }
+    @objc func copy(_ sender: Any?) { model?.copyPixels() }
     @objc func paste(_ sender: Any?) { model?.paste() }
 
     func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
         switch item.action {
-        case #selector(copy(_:)): return model?.canEdit == true
+        case #selector(copy(_:)): return model.map { $0.isSelecting ? $0.canUseSelection : $0.canEdit } ?? false
         case #selector(paste(_:)): return model?.canImport == true
         default: return true
         }

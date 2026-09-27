@@ -17,6 +17,14 @@ struct ImageLayer: Identifiable {
     var isCutout = false
     var isVisible = true
 
+    /// Pixel edits become the new removal source; Restore Original remains explicit.
+    mutating func commitPixels(_ replacement: CGImage, frame newFrame: CGRect? = nil) {
+        image = replacement
+        backgroundRemovalSource = replacement
+        sourceBounds = CGRect(x: 0, y: 0, width: replacement.width, height: replacement.height)
+        if let newFrame { frame = newFrame }
+    }
+
     mutating func replaceImage(_ replacement: CGImage, sourceBounds newBounds: CGRect) {
         let scaleX = frame.width / sourceBounds.width
         let scaleY = frame.height / sourceBounds.height
@@ -103,6 +111,21 @@ struct PendingImageImport: Identifiable {
 
 enum ImportDestination { case layers, newImages }
 
+enum CropTarget { case canvas, layer }
+
+struct LayerExpansionTarget: Identifiable {
+    let id: UUID
+    let image: CGImage
+    let name: String
+    var size: CGSize { CGSize(width: image.width, height: image.height) }
+}
+
+private struct SelectionClipboardPlacement: Codable {
+    static let type = NSPasteboard.PasteboardType("com.imageeditor.pixel-selection")
+    let frame: CGRect
+    let name: String
+}
+
 struct ExportState: Equatable {
     let revision: UUID
     let format: ExportFormat
@@ -136,7 +159,11 @@ final class EditorModel: ObservableObject, Identifiable {
     @Published var zoom: CGFloat = 1
     /// Pending crop in canvas pixels, measured from the top-left. Preview only.
     @Published private(set) var cropRect: CGRect?
+    @Published private(set) var cropTarget = CropTarget.canvas
+    @Published private(set) var selectionTool: PixelSelectionShape?
+    @Published private(set) var pixelSelection: PixelSelection?
     @Published var pendingImport: PendingImageImport?
+    @Published var layerExpansion: LayerExpansionTarget?
     var openNewImages: (([ImageImport]) -> Void)?
     // Tests can choose a temporary destination without automating macOS's remote
     // Save-panel service. The normal app always presents its native panel.
@@ -149,10 +176,13 @@ final class EditorModel: ObservableObject, Identifiable {
     private var gestureStart: EditorSnapshot?
 
     var hasImage: Bool { !document.layers.isEmpty }
-    var isBusy: Bool { busyMessage != nil || aiEdit != nil || pendingImport != nil }
+    var isBusy: Bool { busyMessage != nil || aiEdit != nil || pendingImport != nil || layerExpansion != nil }
     var isCropping: Bool { cropRect != nil }
     var canEdit: Bool { hasImage && !isBusy && !isCropping }
-    var canEditLayer: Bool { canEdit && document.selectedLayer?.isVisible == true }
+    var canSelectPixels: Bool { canEdit && document.selectedLayer?.isVisible == true }
+    var isSelecting: Bool { selectionTool != nil }
+    var canEditLayer: Bool { canSelectPixels && !isSelecting }
+    var canUseSelection: Bool { canSelectPixels && pixelSelection != nil }
     var canImport: Bool { !isBusy && !isCropping }
     var hasUnexportedChanges: Bool {
         // Deleting the last layer still protects the image retained in Undo.
@@ -225,6 +255,7 @@ final class EditorModel: ObservableObject, Identifiable {
         finishEditingFields()
         if isCropping && !isBusy { cancelCrop(); return }
         guard !isBusy, let previous = undoStack.popLast() else { return }
+        clearSelection()
         redoStack.append(document)
         document = previous
         status = "Undid the last edit."
@@ -233,6 +264,7 @@ final class EditorModel: ObservableObject, Identifiable {
     func redo() {
         finishEditingFields()
         guard !isBusy, !isCropping, let next = redoStack.popLast() else { return }
+        clearSelection()
         undoStack.append(document)
         document = next
         status = "Redid the last edit."
@@ -243,6 +275,7 @@ final class EditorModel: ObservableObject, Identifiable {
         let newSize = CGSize(width: min(8192, max(1, (width ?? document.canvas.width).rounded())),
                              height: min(8192, max(1, (height ?? document.canvas.height).rounded())))
         guard newSize != document.canvas else { return }
+        clearSelection()
         checkpoint()
         // Expanding/shrinking the canvas keeps the image relative to its center.
         for index in document.layers.indices {
@@ -269,33 +302,103 @@ final class EditorModel: ObservableObject, Identifiable {
         finishEditingFields()
         guard canEdit else { return }
         endGesture()
+        clearSelection()
+        cropTarget = .canvas
         cropRect = CGRect(origin: .zero, size: document.canvas)
         zoom = 1
-        status = "Drag to select an area. Return applies the crop; Esc cancels."
+        status = "Crop Canvas · Drag to select an area. Return applies; Esc cancels."
     }
+
+    func startLayerCrop(_ id: UUID? = nil) {
+        finishEditingFields()
+        guard canEdit else { return }
+        if let id { selectLayer(id) }
+        guard document.selectedLayer?.isVisible == true else { return }
+        endGesture()
+        clearSelection()
+        cropTarget = .layer
+        cropRect = document.frame
+        zoom = 1
+        status = "Crop Layer · Keep part of this layer. Canvas size stays the same."
+    }
+
+    func startLayerExpansion(_ id: UUID? = nil) {
+        finishEditingFields()
+        guard canEdit else { return }
+        if let id { selectLayer(id) }
+        guard let layer = document.selectedLayer, layer.isVisible else { return }
+        endGesture()
+        clearSelection()
+        layerExpansion = LayerExpansionTarget(id: layer.id, image: layer.image, name: layer.name)
+    }
+
+    func cancelLayerExpansion() {
+        layerExpansion = nil
+        status = "Layer expansion canceled."
+    }
+
+    func applyLayerExpansion(_ expansion: LayerExpansion, fill: CGColor?) throws {
+        guard busyMessage == nil, aiEdit == nil, pendingImport == nil, !isCropping,
+              let target = layerExpansion, let index = document.layers.firstIndex(where: { $0.id == target.id }) else { return }
+        let insets = try expansion.pixelInsets(for: target.size)
+        guard !insets.isEmpty else { layerExpansion = nil; return }
+        let image = try ImageEngine.expanded(target.image, by: expansion, fill: fill)
+        let local = CGRect(x: -CGFloat(insets.left), y: -CGFloat(insets.top), width: CGFloat(image.width), height: CGFloat(image.height))
+        let frame = ImageEngine.canvasRect(local, in: document.layers[index])
+        checkpoint()
+        document.layers[index].commitPixels(image, frame: frame)
+        layerExpansion = nil
+        status = "Layer expanded to \(image.width) × \(image.height) px · Fit & Center includes the new border."
+    }
+
+    var cropBounds: CGRect {
+        cropTarget == .layer ? document.frame : CGRect(origin: .zero, size: document.canvas)
+    }
+
+    /// Inspector values use source pixels for layer crops and canvas pixels otherwise.
+    var cropPixelRect: CGRect? {
+        guard let cropRect else { return nil }
+        if cropTarget == .layer, let layer = document.selectedLayer {
+            return ImageEngine.pixelBounds(ImageEngine.imageRect(cropRect, in: layer), in: layer.image)
+        }
+        return cropRect
+    }
+
+    var cropPixelSize: CGSize { cropTarget == .layer ? imageSize : document.canvas }
 
     func updateCrop(_ rect: CGRect) {
         guard isCropping, !isBusy,
               [rect.origin.x, rect.origin.y, rect.width, rect.height].allSatisfy({ $0.isFinite }) else { return }
-        let width = min(document.canvas.width, max(1, rect.width.rounded()))
-        let height = min(document.canvas.height, max(1, rect.height.rounded()))
-        cropRect = CGRect(x: min(document.canvas.width - width, max(0, rect.minX.rounded())),
-                          y: min(document.canvas.height - height, max(0, rect.minY.rounded())),
-                          width: width, height: height)
+        if cropTarget == .layer, let layer = document.selectedLayer {
+            let local = ImageEngine.imageRect(rect, in: layer)
+            let clamped = clampedPixelRect(local, size: imageSize)
+            cropRect = ImageEngine.canvasRect(clamped, in: layer)
+        } else {
+            cropRect = clampedPixelRect(rect, size: document.canvas)
+        }
+    }
+
+    private func clampedPixelRect(_ rect: CGRect, size: CGSize) -> CGRect {
+        let width = min(size.width, max(1, rect.width.rounded()))
+        let height = min(size.height, max(1, rect.height.rounded()))
+        return CGRect(x: min(size.width - width, max(0, rect.minX.rounded())),
+                      y: min(size.height - height, max(0, rect.minY.rounded())), width: width, height: height)
     }
 
     func setCrop(x: Double? = nil, y: Double? = nil, width: Double? = nil, height: Double? = nil) {
-        guard var rect = cropRect else { return }
-        if let x { rect.origin.x = x }
-        if let y { rect.origin.y = y }
-        if let width { rect.size.width = min(width, document.canvas.width - rect.minX) }
-        if let height { rect.size.height = min(height, document.canvas.height - rect.minY) }
-        updateCrop(rect)
+        guard var rect = cropPixelRect else { return }
+        guard [x, y, width, height].compactMap({ $0 }).allSatisfy({ $0.isFinite }) else { return }
+        if let x { rect.origin.x = min(cropPixelSize.width - 1, max(0, x)) }
+        if let y { rect.origin.y = min(cropPixelSize.height - 1, max(0, y)) }
+        if let width { rect.size.width = max(1, min(width, cropPixelSize.width - rect.minX)) }
+        if let height { rect.size.height = max(1, min(height, cropPixelSize.height - rect.minY)) }
+        if cropTarget == .layer, let layer = document.selectedLayer { updateCrop(ImageEngine.canvasRect(rect, in: layer)) }
+        else { updateCrop(rect) }
     }
 
     func resetCrop() {
         finishEditingFields()
-        updateCrop(CGRect(origin: .zero, size: document.canvas))
+        updateCrop(cropBounds)
     }
 
     func cancelCrop() {
@@ -308,6 +411,17 @@ final class EditorModel: ObservableObject, Identifiable {
     func applyCrop() {
         finishEditingFields()
         guard !isBusy, let rect = cropRect else { return }
+        if cropTarget == .layer {
+            guard let index = document.selectedIndex, let pixels = cropPixelRect,
+                  let image = document.image?.cropping(to: pixels) else { return }
+            let frame = ImageEngine.canvasRect(pixels, in: document.layers[index])
+            cropRect = nil
+            guard pixels != CGRect(origin: .zero, size: imageSize) else { status = "Full layer kept."; return }
+            checkpoint()
+            document.layers[index].commitPixels(image, frame: frame)
+            status = "Layer cropped to \(image.width) × \(image.height) px · Fit & Center now uses this crop."
+            return
+        }
         cropRect = nil
         guard rect != CGRect(origin: .zero, size: document.canvas) else {
             status = "Full canvas kept."
@@ -322,6 +436,66 @@ final class EditorModel: ObservableObject, Identifiable {
         document.canvas = rect.size
         document.padding = min(document.padding, maximumPadding)
         status = "Cropped to \(Int(rect.width)) × \(Int(rect.height)) px · ⌘Z undoes the crop."
+    }
+
+    func setSelectionTool(_ shape: PixelSelectionShape?) {
+        finishEditingFields()
+        guard canEdit, shape == nil || document.selectedLayer?.isVisible == true else { return }
+        endGesture()
+        pixelSelection = nil
+        selectionTool = shape
+        status = shape == nil ? "Move Layer · Drag to move; drag a corner to resize."
+            : "Select on this layer · Shift draws a square or circle. Delete erases; ⌘C copies; Esc deselects."
+    }
+
+    func clearSelection() {
+        pixelSelection = nil
+        selectionTool = nil
+    }
+
+    func updateSelection(_ rect: CGRect) {
+        guard canSelectPixels, let shape = selectionTool,
+              [rect.minX, rect.minY, rect.width, rect.height].allSatisfy({ $0.isFinite }) else { return }
+        let bounded = rect.standardized.intersection(CGRect(origin: .zero, size: document.canvas))
+        pixelSelection = bounded.isNull || bounded.width < 1 || bounded.height < 1
+            ? nil : PixelSelection(rect: bounded, shape: shape)
+    }
+
+    func deleteSelection() {
+        finishEditingFields()
+        guard canUseSelection, let selection = pixelSelection, let index = document.selectedIndex else { return }
+        do {
+            let image = try ImageEngine.deletingSelection(selection, from: document.layers[index])
+            checkpoint()
+            document.layers[index].commitPixels(image)
+            status = "Selected pixels deleted from this layer · ⌘Z restores them."
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    func deleteFromCanvas() {
+        if isSelecting { deleteSelection() }
+        else { deleteLayer() }
+    }
+
+    func copyPixels() {
+        if isSelecting { copySelection() }
+        else { exportImage(copy: true) }
+    }
+
+    func copySelection(to pasteboard: NSPasteboard = .general) {
+        finishEditingFields()
+        guard canUseSelection, let selection = pixelSelection, let layer = document.selectedLayer else { return }
+        do {
+            let result = try ImageEngine.copySelection(selection, from: layer)
+            let data = try ImageEngine.encode(result.image, format: .png, quality: 1)
+            let placement = try JSONEncoder().encode(SelectionClipboardPlacement(frame: result.frame, name: layer.name + " selection"))
+            let item = NSPasteboardItem()
+            item.setData(data, forType: .png)
+            item.setData(placement, forType: SelectionClipboardPlacement.type)
+            pasteboard.clearContents()
+            guard pasteboard.writeObjects([item]) else { throw EditorError.message("Couldn’t copy the selection. Try again.") }
+            status = "Selection copied as PNG · ⌘V pastes it as a new layer."
+        } catch { errorMessage = error.localizedDescription }
     }
 
     func fitAndCenter() {
@@ -406,6 +580,7 @@ final class EditorModel: ObservableObject, Identifiable {
         finishEditingFields()
         guard canEdit else { return }
         endGesture()
+        clearSelection()
         do {
             let canvas = try ImageEngine.render(layers: document.layers, canvas: document.canvas,
                                                 background: document.background, format: .png)
@@ -481,6 +656,7 @@ final class EditorModel: ObservableObject, Identifiable {
         finishEditingFields()
         guard canImport, !items.isEmpty else { return }
         endGesture()
+        clearSelection()
         busyMessage = items.count == 1 ? "Opening image…" : "Opening \(items.count) images…"
         let canvas = document.canvas, padding = document.padding
         Task {
@@ -516,6 +692,7 @@ final class EditorModel: ObservableObject, Identifiable {
         finishEditingFields()
         guard canEdit, document.layers.contains(where: { $0.id == id }) else { return }
         endGesture()
+        clearSelection()
         document.selectedLayerID = id
     }
 
@@ -530,6 +707,7 @@ final class EditorModel: ObservableObject, Identifiable {
     func toggleLayerVisibility(_ id: UUID) {
         finishEditingFields()
         guard canEdit, let index = document.layers.firstIndex(where: { $0.id == id }) else { return }
+        if id == document.selectedLayerID { clearSelection() }
         checkpoint()
         document.layers[index].isVisible.toggle()
     }
@@ -537,6 +715,7 @@ final class EditorModel: ObservableObject, Identifiable {
     func duplicateLayer() {
         finishEditingFields()
         guard canEdit, let index = document.selectedIndex else { return }
+        clearSelection()
         checkpoint()
         var layer = document.layers[index]
         layer.id = UUID(); layer.name += " copy"
@@ -549,6 +728,7 @@ final class EditorModel: ObservableObject, Identifiable {
     func deleteLayer() {
         finishEditingFields()
         guard canEdit, let index = document.selectedIndex else { return }
+        clearSelection()
         checkpoint()
         document.layers.remove(at: index)
         document.selectedLayerID = document.layers.isEmpty ? nil : document.layers[min(index, document.layers.count - 1)].id
@@ -618,6 +798,30 @@ final class EditorModel: ObservableObject, Identifiable {
     @discardableResult
     func importPasteboard(_ pasteboard: NSPasteboard, isDrop: Bool = false) -> Bool {
         guard canImport else { return false }
+        // A copied selection is already a layer-sized PNG. Preserve its transparent
+        // corners, native resolution and placement instead of trimming and fitting it.
+        if !isDrop, let metadata = pasteboard.data(forType: SelectionClipboardPlacement.type),
+           let placement = try? JSONDecoder().decode(SelectionClipboardPlacement.self, from: metadata),
+           let data = pasteboard.data(forType: .png),
+           [placement.frame.minX, placement.frame.minY, placement.frame.width, placement.frame.height]
+            .allSatisfy({ $0.isFinite && abs($0) <= 1_000_000 }),
+           placement.frame.width > 0, placement.frame.height > 0 {
+            do {
+                let image = try ImageEngine.decode(data)
+                finishEditingFields()
+                endGesture()
+                clearSelection()
+                let size = CGSize(width: image.width, height: image.height)
+                let frame = hasImage ? placement.frame : ImageEngine.fittedFrame(imageSize: size, canvas: document.canvas, padding: document.padding)
+                let layer = ImageLayer(image: image, original: image, sourceBounds: CGRect(origin: .zero, size: size),
+                                       name: String(placement.name.prefix(200)), frame: frame)
+                checkpoint()
+                document.layers.append(layer)
+                document.selectedLayerID = layer.id
+                status = "Selection pasted as a new layer · Drag to move it."
+                return true
+            } catch { errorMessage = error.localizedDescription; return true }
+        }
         var items: [ImageImport] = []
         // Finder file collections must not collapse to their preview bitmap or first URL.
         if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL],

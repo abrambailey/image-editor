@@ -8,12 +8,24 @@ Free and open source under the [MIT license](LICENSE). Currently available to bu
 
 ## Features
 
-- **Crop, resize, and arrange.** Set exact canvas dimensions, scale and position images, snap to center guides, and add padding around your composition.
+- **Crop, resize, and arrange.** Crop individual layers, set exact canvas dimensions, fit and center cropped images, and add padding around your composition. Canvas cropping remains a separate action.
+- **Expand a layer.** Add a border in pixels or percentages, with one amount for all sides or separate amounts for each edge. Choose white, a custom color, or transparency.
+- **Select pixels.** Draw rectangles or ellipses (Shift for squares or circles), delete selected pixels, or copy and paste the selection as a new layer.
 - **Work with layers and tabs.** Combine images, reorder or hide layers, and keep several edits open with separate Undo histories.
 - **Remove backgrounds locally.** Create transparent cutouts on your Mac, clean up white edges, and restore the original image when needed. Background removal runs offline after the first build downloads its model.
 - **Edit with AI.** Describe a change in words, optionally paint the area to edit, and compare the result with the original before applying it. Blend a selected area back into your image for more control.
 - **Export or copy.** Save transparent PNGs or adjustable-quality JPGs, or copy the edited image straight into another app. Export the visible image bounds or include the full canvas.
 - **Use familiar Mac controls.** Open files, drag and drop, paste from the clipboard, or load an image from a URL. Undo and Redo are available throughout, and close/quit prompts help protect unexported work.
+
+## Layer tools
+
+Each layer row has a **crop icon** that trims that layer's actual pixels. **Fit & Center** then uses the cropped dimensions. **Crop Canvas** in the toolbar changes the canvas boundary while retaining the layers' pixels.
+
+The **outward arrows** beside Crop open **Expand Layer**. Set pixels or percentages for all sides or individual edges, choose a fill, and review the resulting dimensions before applying. Percentages apply per side against the current width or height. Expansion keeps the existing image in place; Fit & Center includes the new border. Both layer cropping and expansion support Undo.
+
+The corner toolbar has a **hand** for moving layers, a **dashed rectangle**, and a **dashed circle** for pixel selections. Hold **Shift** while drawing for a square or circle. With the canvas focused, **Delete** clears the selected layer's pixels, **⌘C** copies the selection, and **⌘V** pastes it as a new layer. **Esc** or **⌘D** returns to Move. **Copy Image** still copies the whole visible composition.
+
+See the [user guide](docs/USAGE.md#crop-a-layer-or-the-canvas) for exact crop dimensions, expansion options, and selection behavior.
 
 ## Build and run
 
@@ -51,7 +63,7 @@ This is an experimental app: editable layers and Undo history stay in memory, wi
 
 ## Guides and contributing
 
-- [User guide](docs/USAGE.md): layers, cropping, background removal, export settings, AI editing, and keyboard shortcuts.
+- [User guide](docs/USAGE.md): layers, cropping, expansion, pixel selections, background removal, export settings, AI editing, and keyboard shortcuts.
 - [Development and testing](docs/DEVELOPMENT.md): build checks, regression tests, and implementation details.
 - [Contributing](CONTRIBUTING.md): bug reports, pull requests, and support expectations.
 - [Security](SECURITY.md): data handling and private vulnerability reporting.

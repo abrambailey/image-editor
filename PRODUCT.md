@@ -21,7 +21,9 @@ Make quick image edits in a lightweight native app: crop and resize, arrange lay
 ## Capabilities and Constraints
 
 - Open, paste, or drop images; accept direct web image URLs.
-- Crop to a rectangular selection with exact pixel dimensions, preserving source pixels and supporting Undo.
+- Crop individual layers to a rectangle with exact source-pixel dimensions; Fit & Center uses the cropped layer. Crop Canvas separately changes the canvas boundary, keeping layer pixels intact. Both support Undo.
+- Draw rectangular or elliptical pixel selections on the selected layer; Shift constrains squares/circles. Delete clears selected pixels, Copy Selection writes transparent PNG, and Paste adds the selection as a new layer at its existing scale and position.
+- Expand individual layers with pixel or percentage amounts, linked across all sides or set separately. Fill only the new area with white, a custom color, or transparency; preserve original pixel placement and support Undo.
 - Change canvas width and height independently.
 - Remove backgrounds using AI and retain genuine alpha transparency.
 - Drag and resize the subject, center it, and fit it within specified padding.

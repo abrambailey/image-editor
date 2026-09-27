@@ -35,6 +35,7 @@ struct EditorView: View {
                         .accessibilityElement(children: .combine)
                     }
                 }
+                .overlay(alignment: .topLeading) { layerTools.padding(10) }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 Divider()
                 inspector.frame(width: inspectorWidth)
@@ -83,8 +84,8 @@ struct EditorView: View {
             documentToolbarItem
             #endif
             ToolbarItemGroup(placement: .primaryAction) {
-                Button(action: model.startCrop) { Label("Crop", systemImage: "crop") }
-                    .disabled(!model.canEdit).help("Crop the image and canvas (⇧⌘X)")
+                Button(action: model.startCrop) { Label("Crop Canvas", systemImage: "crop") }
+                    .disabled(!model.canEdit).help("Crop the canvas boundary; keeps layer pixels (⇧⌘X)")
                 Button(action: model.startAIEdit) { Label("AI Edit", systemImage: "sparkles") }
                     .disabled(!model.canEdit).help("Edit with Sunburst using a text instruction (⇧⌘I)")
                 Button(action: model.removeBackground) {
@@ -98,6 +99,7 @@ struct EditorView: View {
                 }.disabled(!model.canEdit).help("Export PNG or JPG (⇧⌘E)")
             }
         }
+        .sheet(item: $model.layerExpansion) { target in LayerExpansionSheet(model: model, target: target) }
         .sheet(item: $model.pendingImport) { pending in ImportChoiceSheet(model: model, pending: pending) }
         .sheet(isPresented: $model.showURLSheet) { URLSheet(model: model) }
         .alert("Couldn’t complete that", isPresented: Binding(
@@ -105,6 +107,47 @@ struct EditorView: View {
             set: { if !$0 { model.errorMessage = nil } }
         )) { Button("OK", role: .cancel) { model.errorMessage = nil } }
         message: { Text(model.errorMessage ?? "") }
+    }
+
+    private var layerTools: some View {
+        HStack(spacing: 2) {
+            toolButton("Move layer", symbol: "hand.raised", shape: nil,
+                       help: "Move layer · Drag to move; drag a corner to resize")
+            toolButton("Rectangle selection", symbol: "rectangle.dashed", shape: .rectangle,
+                       help: "Rectangle selection · Hold Shift for a square")
+            toolButton("Ellipse selection", symbol: "circle.dashed", shape: .ellipse,
+                       help: "Ellipse selection · Hold Shift for a circle")
+        }
+        .padding(3)
+        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 7))
+        .disabled(!model.canSelectPixels)
+        .accessibilityElement(children: .contain).accessibilityLabel("Layer tools")
+    }
+
+    private func toolButton(_ label: String, symbol: String, shape: PixelSelectionShape?, help: String) -> some View {
+        let selected = model.selectionTool == shape
+        return Button { model.setSelectionTool(shape) } label: {
+            Image(systemName: symbol).font(.system(size: 15))
+                .frame(width: 30, height: 28)
+                .foregroundStyle(selected ? Color.white : Color.primary)
+                .background(selected ? Color.accentColor : Color.clear, in: RoundedRectangle(cornerRadius: 4))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless).help(help).accessibilityLabel(label)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    private var selectionInspector: some View {
+        section("Pixel Selection") {
+            Text(model.document.selectedLayer?.name ?? "Selected layer")
+                .lineLimit(2).font(.system(size: 11, weight: .medium))
+            Text("Drag on the canvas to select this layer’s pixels. Hold Shift for a square or circle. Drag again to replace the selection.")
+                .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Text("Paste with ⌘V to add the copied selection as a new layer. Other layers stay intact.")
+                .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Text("Esc deselects. Arrow keys move the selection; Shift moves it by 10 px.")
+                .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     private var documentToolbarItem: some ToolbarContent {
@@ -152,69 +195,73 @@ struct EditorView: View {
         VStack(spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    if let crop = model.cropRect {
+                    if let crop = model.cropPixelRect {
                         cropInspector(crop)
                     } else {
                         layersInspector
                         Divider()
-                        section("Canvas") {
-                            HStack(spacing: 10) {
-                                PixelField("Width", value: model.document.canvas.width, range: 1...8192) { model.setCanvas(width: $0) }
-                                PixelField("Height", value: model.document.canvas.height, range: 1...8192) { model.setCanvas(height: $0) }
-                            }
-                            HStack {
-                                Menu("Presets") {
-                                    Button("Square · 1200 × 1200") { model.setCanvas(width: 1200, height: 1200) }
-                                    Button("Square · 2000 × 2000") { model.setCanvas(width: 2000, height: 2000) }
-                                    Button("Landscape · 1600 × 1200") { model.setCanvas(width: 1600, height: 1200) }
-                                    Button("Portrait · 1200 × 1600") { model.setCanvas(width: 1200, height: 1600) }
-                                    if let original = model.document.original {
-                                        Button("Original · \(original.width) × \(original.height)") {
-                                            model.setCanvas(width: Double(original.width), height: Double(original.height))
+                        if model.isSelecting {
+                            selectionInspector
+                        } else {
+                            section("Canvas") {
+                                HStack(spacing: 10) {
+                                    PixelField("Width", value: model.document.canvas.width, range: 1...8192) { model.setCanvas(width: $0) }
+                                    PixelField("Height", value: model.document.canvas.height, range: 1...8192) { model.setCanvas(height: $0) }
+                                }
+                                HStack {
+                                    Menu("Presets") {
+                                        Button("Square · 1200 × 1200") { model.setCanvas(width: 1200, height: 1200) }
+                                        Button("Square · 2000 × 2000") { model.setCanvas(width: 2000, height: 2000) }
+                                        Button("Landscape · 1600 × 1200") { model.setCanvas(width: 1600, height: 1200) }
+                                        Button("Portrait · 1200 × 1600") { model.setCanvas(width: 1200, height: 1600) }
+                                        if let original = model.document.original {
+                                            Button("Original · \(original.width) × \(original.height)") {
+                                                model.setCanvas(width: Double(original.width), height: Double(original.height))
+                                            }
                                         }
                                     }
+                                    Button { model.setCanvas(width: model.document.canvas.height, height: model.document.canvas.width) } label: {
+                                        Image(systemName: "arrow.left.arrow.right")
+                                    }.help("Swap width and height").accessibilityLabel("Swap canvas width and height")
                                 }
-                                Button { model.setCanvas(width: model.document.canvas.height, height: model.document.canvas.width) } label: {
-                                    Image(systemName: "arrow.left.arrow.right")
-                                }.help("Swap width and height").accessibilityLabel("Swap canvas width and height")
+                                Picker("Background", selection: Binding(get: { model.document.background }, set: model.setBackground)) {
+                                    ForEach(CanvasBackground.allCases) { Text($0.rawValue).tag($0) }
+                                }.labelsHidden().accessibilityLabel("Canvas background")
                             }
-                            Picker("Background", selection: Binding(get: { model.document.background }, set: model.setBackground)) {
-                                ForEach(CanvasBackground.allCases) { Text($0.rawValue).tag($0) }
-                            }.labelsHidden().accessibilityLabel("Canvas background")
-                        }
-                        Divider()
-                        section("Padding & placement") {
-                            PixelField("Minimum padding", value: model.document.padding, range: 0...model.maximumPadding) { model.setPadding($0) }
-                            Button(action: model.fitAndCenter) {
-                                Label("Fit & Center", systemImage: "arrow.down.right.and.arrow.up.left")
-                                    .frame(maxWidth: .infinity)
-                            }.disabled(!model.canEditLayer)
-                            Button("Center Layer", action: model.center).disabled(!model.canEditLayer)
-                            Text("Fits the selected layer inside this margin and centers it. Drag a corner to fine-tune.")
-                                .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                        }
-                        Divider()
-                        section("Selected layer") {
-                            Button(action: model.removeBackground) {
-                                Label(model.document.isCutout ? "Remove Background Again" : "Remove Background", systemImage: "wand.and.stars")
-                                    .frame(maxWidth: .infinity)
-                            }.disabled(!model.canEditLayer)
-                            Text("On-device AI. Your image stays on your Mac.")
-                                .font(.system(size: 11)).foregroundStyle(.secondary)
-                            Menu("Refine Cutout") {
-                                Button("Clean White Edges", action: model.cleanWhiteEdges)
-                                Divider()
-                                Button("Restore Original", action: model.restoreOriginal)
-                            }.disabled(!model.canEditLayer)
-                            DisclosureGroup("Position & scale") {
-                                VStack(spacing: 10) {
-                                    HStack(spacing: 10) {
-                                        PixelField("X", value: model.document.frame.minX, range: -100_000...100_000) { model.setPosition(x: $0) }
-                                        PixelField("Y", value: model.document.frame.minY, range: -100_000...100_000) { model.setPosition(y: $0) }
-                                    }
-                                    PixelField("Scale", value: model.scalePercent, range: 1...2000, unit: "%") { model.setScale($0) }
-                                }.padding(.top, 8)
-                            }.font(.system(size: 11)).disabled(!model.canEditLayer)
+                            Divider()
+                            section("Padding & placement") {
+                                PixelField("Minimum padding", value: model.document.padding, range: 0...model.maximumPadding) { model.setPadding($0) }
+                                Button(action: model.fitAndCenter) {
+                                    Label("Fit & Center", systemImage: "arrow.down.right.and.arrow.up.left")
+                                        .frame(maxWidth: .infinity)
+                                }.disabled(!model.canEditLayer)
+                                Button("Center Layer", action: model.center).disabled(!model.canEditLayer)
+                                Text("Fits the selected layer inside this margin and centers it. Drag a corner to fine-tune.")
+                                    .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                            }
+                            Divider()
+                            section("Selected layer") {
+                                Button(action: model.removeBackground) {
+                                    Label(model.document.isCutout ? "Remove Background Again" : "Remove Background", systemImage: "wand.and.stars")
+                                        .frame(maxWidth: .infinity)
+                                }.disabled(!model.canEditLayer)
+                                Text("On-device AI. Your image stays on your Mac.")
+                                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                                Menu("Refine Cutout") {
+                                    Button("Clean White Edges", action: model.cleanWhiteEdges)
+                                    Divider()
+                                    Button("Restore Original", action: model.restoreOriginal)
+                                }.disabled(!model.canEditLayer)
+                                DisclosureGroup("Position & scale") {
+                                    VStack(spacing: 10) {
+                                        HStack(spacing: 10) {
+                                            PixelField("X", value: model.document.frame.minX, range: -100_000...100_000) { model.setPosition(x: $0) }
+                                            PixelField("Y", value: model.document.frame.minY, range: -100_000...100_000) { model.setPosition(y: $0) }
+                                        }
+                                        PixelField("Scale", value: model.scalePercent, range: 1...2000, unit: "%") { model.setScale($0) }
+                                    }.padding(.top, 8)
+                                }.font(.system(size: 11)).disabled(!model.canEditLayer)
+                            }
                         }
                     }
                 }
@@ -226,15 +273,28 @@ struct EditorView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             Divider()
-            if let crop = model.cropRect {
+            if let crop = model.cropPixelRect {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("Crop to \(Int(crop.width)) × \(Int(crop.height)) px")
+                    Text("\(model.cropTarget == .layer ? "Layer" : "Canvas"): \(Int(crop.width)) × \(Int(crop.height)) px")
                         .font(.system(size: 13, weight: .semibold)).monospacedDigit()
                     Button(action: model.applyCrop) { Text("Apply Crop").frame(maxWidth: .infinity) }
                         .buttonStyle(.borderedProminent).controlSize(.large)
                         .keyboardShortcut(.defaultAction)
                     Button("Cancel", action: model.cancelCrop)
                         .frame(maxWidth: .infinity).keyboardShortcut(.cancelAction)
+                }.padding(inspectorInset).padding(.trailing, inspectorScrollerGutter)
+            } else if model.isSelecting {
+                VStack(alignment: .leading, spacing: 12) {
+                    Button { model.copySelection() } label: {
+                        Label("Copy Selection", systemImage: "doc.on.doc").frame(maxWidth: .infinity)
+                    }.buttonStyle(.borderedProminent).controlSize(.large)
+                        .disabled(!model.canUseSelection).help("Copy selected pixels as PNG (⌘C with canvas focused)")
+                    Button(action: model.deleteSelection) {
+                        Label("Delete Selected Pixels", systemImage: "eraser").frame(maxWidth: .infinity)
+                    }.controlSize(.large).disabled(!model.canUseSelection)
+                        .help("Make selected pixels transparent (Delete with canvas focused)")
+                    Button("Deselect & Move") { model.setSelectionTool(nil) }
+                        .frame(maxWidth: .infinity).keyboardShortcut("d", modifiers: .command)
                 }.padding(inspectorInset).padding(.trailing, inspectorScrollerGutter)
             } else {
                 VStack(alignment: .leading, spacing: 12) {
@@ -317,20 +377,22 @@ struct EditorView: View {
     }
 
     private func cropInspector(_ crop: CGRect) -> some View {
-        section("Crop") {
+        section(model.cropTarget == .layer ? "Crop Layer" : "Crop Canvas") {
             Text("Drag to select an area. Drag inside the selection to move it, or use its edges and corners to resize.")
                 .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 10) {
-                PixelField("Crop X", value: crop.minX, range: 0...(model.document.canvas.width - crop.width)) { model.setCrop(x: $0) }
-                PixelField("Crop Y", value: crop.minY, range: 0...(model.document.canvas.height - crop.height)) { model.setCrop(y: $0) }
+                PixelField("Crop X", value: crop.minX, range: 0...(model.cropPixelSize.width - crop.width)) { model.setCrop(x: $0) }
+                PixelField("Crop Y", value: crop.minY, range: 0...(model.cropPixelSize.height - crop.height)) { model.setCrop(y: $0) }
             }
             HStack(spacing: 10) {
-                PixelField("Crop width", value: crop.width, range: 1...(model.document.canvas.width - crop.minX)) { model.setCrop(width: $0) }
-                PixelField("Crop height", value: crop.height, range: 1...(model.document.canvas.height - crop.minY)) { model.setCrop(height: $0) }
+                PixelField("Crop width", value: crop.width, range: 1...(model.cropPixelSize.width - crop.minX)) { model.setCrop(width: $0) }
+                PixelField("Crop height", value: crop.height, range: 1...(model.cropPixelSize.height - crop.minY)) { model.setCrop(height: $0) }
             }
             Button("Reset Selection", action: model.resetCrop)
             Divider().padding(.vertical, 8)
-            Text("The selected area becomes the canvas and export size. Image scale stays the same.")
+            Text(model.cropTarget == .layer
+                 ? "Trims only this layer. Dimensions above are source pixels. Canvas size stays the same; Fit & Center uses the cropped layer."
+                 : "Changes the canvas boundary and shifts all layers. Their pixels stay intact; Fit & Center can reveal them again.")
                 .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             Text("Arrow keys move the selection by 1 px; hold Shift for 10 px. Return applies. Esc cancels.")
                 .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -472,8 +534,17 @@ private struct LayerRow: View {
                 }.contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .help(layer.name)
             .accessibilityLabel("Select layer \(layer.name)")
             .accessibilityAddTraits(selected ? .isSelected : [])
+            Button { model.startLayerCrop(layer.id) } label: {
+                Image(systemName: "crop").frame(width: 24, height: 28)
+            }.buttonStyle(.plain).disabled(!model.canEdit || !layer.isVisible)
+                .help("Crop this layer’s pixels").accessibilityLabel("Crop layer \(layer.name)")
+            Button { model.startLayerExpansion(layer.id) } label: {
+                Image(systemName: "arrow.up.left.and.arrow.down.right").frame(width: 24, height: 28)
+            }.buttonStyle(.plain).disabled(!model.canEdit || !layer.isVisible)
+                .help("Expand this layer with a border").accessibilityLabel("Expand layer \(layer.name)")
             Button { model.toggleLayerVisibility(layer.id) } label: {
                 Image(systemName: layer.isVisible ? "eye" : "eye.slash").frame(width: 24, height: 28)
             }.buttonStyle(.plain)
@@ -483,6 +554,8 @@ private struct LayerRow: View {
         .font(.system(size: 11)).padding(.horizontal, 6).frame(height: 40)
         .background(selected ? Color.accentColor.opacity(0.15) : Color.clear, in: RoundedRectangle(cornerRadius: 5))
         .contextMenu {
+            Button("Crop Layer…") { model.startLayerCrop(layer.id) }.disabled(!layer.isVisible)
+            Button("Expand Layer…") { model.startLayerExpansion(layer.id) }.disabled(!layer.isVisible)
             Button("Rename…") { name = layer.name; renaming = true }
             Button("Duplicate") { model.selectLayer(layer.id); model.duplicateLayer() }
             Button(layer.isVisible ? "Hide" : "Show") { model.toggleLayerVisibility(layer.id) }

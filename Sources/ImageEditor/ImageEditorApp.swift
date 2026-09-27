@@ -81,7 +81,7 @@ private struct EditorCommands: Commands {
             CommandMenu("Image") {
                 Button("Edit with Sunburst…", action: { workspace.activeModel.startAIEdit() })
                     .keyboardShortcut("i", modifiers: [.command, .shift]).disabled(!model.canEdit)
-                Button("Crop…", action: { workspace.activeModel.startCrop() })
+                Button("Crop Canvas…", action: { workspace.activeModel.startCrop() })
                     .keyboardShortcut("x", modifiers: [.command, .shift]).disabled(!model.canEdit)
                 if model.isCropping {
                     Button("Apply Crop", action: { workspace.activeModel.applyCrop() }).disabled(model.isBusy)
@@ -110,7 +110,18 @@ private struct EditorCommands: Commands {
                 Button("Previous Tab") { workspace.selectAdjacentTab(-1) }
                     .keyboardShortcut("[", modifiers: [.command, .shift]).disabled(workspace.tabs.count < 2)
             }
+            CommandMenu("Select") {
+                Button("Rectangle Selection") { workspace.activeModel.setSelectionTool(.rectangle) }.disabled(!model.canSelectPixels)
+                Button("Ellipse Selection") { workspace.activeModel.setSelectionTool(.ellipse) }.disabled(!model.canSelectPixels)
+                Button("Deselect") { workspace.activeModel.setSelectionTool(nil) }
+                    .keyboardShortcut("d").disabled(!model.isSelecting || model.isBusy)
+                Divider()
+                Button("Copy Selection") { workspace.activeModel.copySelection() }.disabled(!model.canUseSelection)
+                Button("Delete Selected Pixels") { workspace.activeModel.deleteSelection() }.disabled(!model.canUseSelection)
+            }
             CommandMenu("Layer") {
+                Button("Crop Layer…") { workspace.activeModel.startLayerCrop() }.disabled(!model.canSelectPixels)
+                Button("Expand Layer…") { workspace.activeModel.startLayerExpansion() }.disabled(!model.canSelectPixels)
                 Button("Duplicate Layer", action: { workspace.activeModel.duplicateLayer() }).keyboardShortcut("j").disabled(!model.canEdit)
                 Button("Delete Layer", action: { workspace.activeModel.deleteLayer() }).disabled(!model.canEdit)
                 Divider()
@@ -160,6 +171,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // Standard Paste follows the active tab even before its canvas receives a click.
     @objc func paste(_ sender: Any?) { model?.paste() }
+    @objc func copy(_ sender: Any?) { model?.copyPixels() }
 
     func captureWhenReady() {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
