@@ -8,15 +8,15 @@ Native macOS desktop application.
 
 ## Stack
 
-SwiftUI and AppKit, packaged as a local .app; BiRefNet Lite through Core ML for on-device foreground segmentation. The bundled 1024-pixel model replaces Apple's instance segmentation after the user's Allure fixture exposed lost wires and overly soft product edges.
+SwiftUI and AppKit, packaged as a local .app; BiRefNet Lite through Core ML for on-device background removal, with optional cloud image editing through OpenAI.
 
 ## Users
 
-The user prepares hearing-aid product images collected from the web on their Mac.
+Mac users making everyday edits to photos, screenshots, and graphics, combining images, or using AI to change an image.
 
 ## Product Purpose
 
-Quickly isolate a product, arrange it on a precisely sized canvas with appropriate padding, and export an image ready for publication.
+Make quick image edits in a lightweight native app: crop and resize, arrange layers, remove backgrounds, optionally edit with AI, and export or copy the result into another app.
 
 ## Capabilities and Constraints
 
@@ -36,7 +36,8 @@ Quickly isolate a product, arrange it on a precisely sized canvas with appropria
 
 ## Product Principles
 
-- Preserve product details and original pixels wherever possible.
-- Keep the import, cutout, fit, export workflow short.
+- Preserve image details and original pixels wherever possible.
+- Make common edits easy to reach without requiring a fixed sequence of steps.
+- Keep cloud AI optional and let users compare results before applying them.
 - Make dimensions, transparency, and export behavior explicit.
 - Support familiar Mac keyboard, clipboard, and file interactions.

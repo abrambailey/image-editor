@@ -9,6 +9,8 @@ requests are not guaranteed. Open an issue before starting a large feature.
 Use macOS 14 or newer with Apple's Command Line Tools. Start with
 `./scripts/run.sh`; see the README for the local model download and optional AI
 connection. No API key is needed to build the app or run the tests.
+See the [development guide](docs/DEVELOPMENT.md) for detailed test options and
+implementation notes.
 
 Before submitting a change, run:
 
