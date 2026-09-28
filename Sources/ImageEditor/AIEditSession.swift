@@ -8,7 +8,10 @@ enum AIEditPreview: String, CaseIterable, Identifiable {
 
 @MainActor
 final class AIEditSession: ObservableObject {
-    let original: CGImage
+    let layers: [ImageLayer]
+    private let canvas: CGSize
+    @Published private(set) var selectedLayerIDs: Set<UUID>
+    @Published private(set) var original: CGImage
     @Published var prompt = ""
     @Published var apiKey = ""
     @Published var connectionExpanded = false
@@ -29,8 +32,12 @@ final class AIEditSession: ObservableObject {
     private var requestID = UUID()
     private var blendID = UUID()
 
-    init(original: CGImage, client: any AIImageEditing = SunburstClient(), loadCredential: Bool = true) {
-        self.original = original
+    init(document: EditorSnapshot, client: any AIImageEditing = SunburstClient(), loadCredential: Bool = true) throws {
+        layers = document.layers
+        canvas = document.canvas
+        let selected = document.selectedLayer ?? document.layers.last
+        selectedLayerIDs = Set(selected.map { [$0.id] } ?? [])
+        original = try Self.referenceImage(layers: selected.map { [$0] } ?? [], canvas: document.canvas)
         self.client = client
         if loadCredential {
             apiKey = ProcessInfo.processInfo.environment["OPENAI_API_KEY"] ?? OpenAIKeyStore.load() ?? ""
@@ -38,9 +45,49 @@ final class AIEditSession: ObservableObject {
         connectionExpanded = apiKey.isEmpty
     }
 
+    private static func referenceImage(layers: [ImageLayer], canvas: CGSize) throws -> CGImage {
+        // A single layer retains its native pixels, including content outside the canvas.
+        if layers.count == 1 { return layers[0].image }
+        // Explicitly choosing a hidden layer includes it without changing its visibility.
+        let included = layers.map { layer in
+            var layer = layer; layer.isVisible = true; return layer
+        }
+        return try ImageEngine.render(layers: included, canvas: canvas, background: .transparent, format: .png)
+    }
+
+    var canChooseLayers: Bool { !isWorking && result == nil }
+    var hasLayers: Bool { !selectedLayerIDs.isEmpty }
+    var layerSummary: String {
+        switch selectedLayerIDs.count {
+        case 0: return "Choose at least one layer to edit."
+        case 1: return "Edits one layer in place. Other layers stay unchanged."
+        default: return "Combines \(selectedLayerIDs.count) layers into one. Other layers stay unchanged."
+        }
+    }
+
+    func setLayerIncluded(_ id: UUID, included: Bool) {
+        guard canChooseLayers, layers.contains(where: { $0.id == id }) else { return }
+        var ids = selectedLayerIDs
+        if included { ids.insert(id) } else { ids.remove(id) }
+        guard ids != selectedLayerIDs else { return }
+        do {
+            let image = try Self.referenceImage(layers: layers.filter { ids.contains($0.id) }, canvas: canvas)
+            selectedLayerIDs = ids; original = image
+            strokes.removeAll(); preview = .original; error = nil
+            message = "Layer selection changed. Paint a new edit area if needed."
+        } catch { self.error = error.localizedDescription }
+    }
+
+    func reviseLayers() {
+        guard !isWorking else { return }
+        blendTask?.cancel(); blendID = UUID(); isBlending = false
+        result = nil; blended = nil; preview = .original; brushEnabled = false
+        message = "Choose the layers to edit, then generate a new result."
+    }
+
     var hasSelection: Bool { !strokes.isEmpty }
     var canGenerate: Bool {
-        !isWorking && !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        hasLayers && !isWorking && !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
         !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
     var displayedImage: CGImage {
@@ -51,12 +98,12 @@ final class AIEditSession: ObservableObject {
         }
     }
     var applicableImage: CGImage? {
-        guard !isWorking, !isBlending, preview != .original else { return nil }
+        guard hasLayers, !isWorking, !isBlending, preview != .original else { return nil }
         return preview == .blended ? blended : result
     }
 
     func addStroke(_ stroke: EditStroke) {
-        guard !isWorking, result == nil, !stroke.points.isEmpty else { return }
+        guard hasLayers, !isWorking, result == nil, !stroke.points.isEmpty else { return }
         strokes.append(stroke)
     }
     func undoStroke() { if !isWorking && result == nil && !strokes.isEmpty { strokes.removeLast() } }

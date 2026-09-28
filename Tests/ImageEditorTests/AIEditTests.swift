@@ -6,12 +6,15 @@ actor FixtureImageEditor: AIImageEditing {
     var maskReceived = false
     var transparentBackgroundReceived = false
     var transparentResult = false
+    var receivedImage: Data?
+    var requestCount = 0
     func configure(fail: Bool = false, delay: UInt64 = 0, transparentResult: Bool = false) {
         shouldFail = fail; self.delay = delay; self.transparentResult = transparentResult
     }
     func edit(image: Data, mask: Data?, prompt: String, size: String, transparentBackground: Bool, apiKey: String) async throws -> Data {
         maskReceived = mask != nil
         transparentBackgroundReceived = transparentBackground
+        receivedImage = image; requestCount += 1
         // Intentionally finish after cancellation, to verify stale-result rejection.
         if delay > 0 { try? await Task.sleep(nanoseconds: delay) }
         if shouldFail { throw EditorError.message("Fixture request failed") }
@@ -161,7 +164,7 @@ final class AIEditTests {
         expectTrue(model.document.image === accepted)
         expectTrue(model.document.original === before.original)
         expectTrue(model.document.backgroundRemovalSource === accepted)
-        expectEqual(model.document.frame, CGRect(origin: .zero, size: before.canvas))
+        expectEqual(model.document.frame, before.frame)
         expectEqual(model.undoStack.count, history + 1)
         model.undo()
         expectTrue(model.document.image === before.image)
@@ -172,7 +175,7 @@ final class AIEditTests {
         expectTrue(model.document.image === before.original)
         expectTrue(model.document.backgroundRemovalSource == nil)
 
-        let cancelSession = AIEditSession(original: try solid(), client: service, loadCredential: false)
+        let cancelSession = try AIEditSession(document: before, client: service, loadCredential: false)
         cancelSession.apiKey = "fixture"; cancelSession.prompt = "Edit"
         await service.configure(delay: 500_000_000)
         cancelSession.generate()
@@ -195,6 +198,7 @@ final class AIEditTests {
         let service = FixtureImageEditor()
         await service.configure(transparentResult: true)
         let model = EditorModel()
+        model.setCanvas(width: 100, height: 80); model.setPadding(0)
         model.importData(try ImageEngine.encode(solid(), format: .png, quality: 1))
         try await wait { model.isBusy }
         model.beginAIEdit(client: service, loadCredential: false)
@@ -207,7 +211,7 @@ final class AIEditTests {
         expectEqual(try alpha(session.original, x: 0.75, y: 0.5), 255)
         session.generate()
         try await wait { session.isWorking }
-        expectTrue(await service.transparentBackgroundReceived)
+        expectTrue(!(await service.transparentBackgroundReceived)) // No transparent canvas padding is sent for a single layer.
         let result = try unwrap(session.result)
         expectEqual(try alpha(result, x: 0.05, y: 0.05), 0)
         // Newly removed regions use generated alpha; copying the old alpha would restore the object.

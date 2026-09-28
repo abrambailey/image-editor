@@ -33,7 +33,7 @@ Make quick image edits in a lightweight native app: crop and resize, arrange lay
 - Optional Sunburst cloud editing from a natural-language instruction and optional painted selection, with original/result comparison, optional feathered local blending, and Undo.
 - Multiple image layers per canvas, independent image tabs in one window, and paste/open destination choices. Select, reorder, rename, show/hide, duplicate, and delete layers with Undo. macOS 14+. Local editing needs no cloud account; Sunburst requires an OpenAI API key and separate API billing.
 - Double-click a tab to rename it; its name is suggested for PNG/JPEG export. Tabs keep separate Undo histories, and the last five closed tabs can be reopened during the session.
-- Editable layers are retained only in the current session; there is no saved layered-project format. PNG/JPEG exports and PNG clipboard copies flatten visible layers. Sunburst edits the whole canvas and flattens on Apply; Undo restores the prior layer stack.
+- Editable layers are retained only in the current session; there is no saved layered-project format. PNG/JPEG exports and PNG clipboard copies flatten visible layers. Sunburst defaults to the active layer and allows selecting more: Apply edits one layer in place or combines only the selected layers. Undo restores the prior layer stack.
 - A dot marks work not exported to a file. Closing a changed tab, closing the window, or quitting offers Export, Cancel, and Don’t Export. Only successful file writes acknowledge the exported state; canceled or failed saves and clipboard copies do not. Explicitly discarded tabs may leave the five-tab recovery cache.
 
 ## Product Principles

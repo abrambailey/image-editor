@@ -13,7 +13,7 @@ Free and open source under the [MIT license](LICENSE). Currently available to bu
 - **Select pixels.** Draw rectangles or ellipses (Shift for squares or circles), delete selected pixels, or copy and paste the selection as a new layer.
 - **Work with layers and tabs.** Combine images, reorder or hide layers, and keep several edits open with separate Undo histories.
 - **Remove backgrounds locally.** Create transparent cutouts on your Mac, clean up white edges, and restore the original image when needed. Background removal runs offline after the first build downloads its model.
-- **Edit with AI.** Describe a change in words, optionally paint the area to edit, and compare the result with the original before applying it. Blend a selected area back into your image for more control.
+- **Edit selected layers with AI.** Choose one or more layers, describe a change in words, optionally paint the area to edit, and compare the result with the original. Edit one layer in place or combine only the layers you select. Blend a painted area back into your image for more control.
 - **Export or copy.** Save transparent PNGs or adjustable-quality JPGs, or copy the edited image straight into another app. Export the visible image bounds or include the full canvas.
 - **Use familiar Mac controls.** Open files, drag and drop, paste from the clipboard, or load an image from a URL. Undo and Redo are available throughout, and close/quit prompts help protect unexported work.
 
@@ -43,9 +43,9 @@ The script builds and opens `dist/Image Editor.app`. After that, open the app fr
 
 ## Optional AI editing
 
-Choose **AI Edit**, describe the change, and optionally paint a selection. Review the generated result before applying it, or use Undo afterward. The app calls this feature **Sunburst**.
+Choose **AI Edit**, select one or more layers, describe the change, and optionally paint a selection. The active layer is selected by default. Review the generated result before applying it, or use Undo afterward. The app calls this feature **Sunburst**.
 
-AI editing sends the visible canvas, your instruction, and any selection mask directly to OpenAI. It requires your own OpenAI API key and incurs API charges separate from a ChatGPT subscription. You can keep the key in memory or explicitly save it in your Mac's Keychain. Normal editing and local background removal need no cloud account.
+AI editing sends only the selected layers, your instruction, and any selection mask directly to OpenAI. Applying edits a single layer in place, or combines just the selected layers when you choose several. It requires your own OpenAI API key and incurs API charges separate from a ChatGPT subscription. You can keep the key in memory or explicitly save it in your Mac's Keychain. Normal editing and local background removal need no cloud account.
 
 See the [AI editing guide](docs/USAGE.md#ai-editing-with-sunburst) for selection blending, transparency, and cancellation behavior.
 
@@ -59,7 +59,7 @@ This is an experimental app: editable layers and Undo history stay in memory, wi
 
 - Canvas dimensions are 1–8,192 pixels. Larger imports are downsampled; files and downloads over 50 MB are rejected. Animated images import their first frame.
 - Background removal can miss fine or translucent details. AI edits can change areas outside a painted selection. Review the result before applying or exporting it.
-- Applying an AI result combines the canvas into one layer. Undo restores the previous layers.
+- Selecting multiple layers for an AI edit combines them into one result at the topmost selected layer’s position in the stack. Unselected layers stay intact, and Undo restores the previous stack.
 
 ## Guides and contributing
 

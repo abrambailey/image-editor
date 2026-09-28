@@ -9,7 +9,7 @@ The GitHub Actions workflow compiles the source and runs
 run the full suite on a logged-in Mac for clipboard and native-window coverage.
 CI uses no API credentials and does not publish a downloadable app.
 
-AI tests use a mock service: they verify request construction, API error handling, mask orientation, image sizing, preservation outside the selection, preview isolation, application, Undo/Redo, failure, and cancellation. They do not establish Sunburst output quality or live account access. Use `--ai-edit` with the native UI smoke test and `--capture-ai-selection`, `--capture-ai-result`, or `--capture-ai-blend` to capture its clearly labeled mock previews without API charges.
+AI tests use a mock service: they verify request construction, selected-layer input, single-layer placement and crop, hidden layers, partial merges and stack order, API error handling, mask orientation, image sizing, preservation outside the painted selection, preview isolation, application, Undo/Redo, failure, and cancellation. Empty layer selection disables generation; changing layers clears painted areas and rejects stale results. They do not establish Sunburst output quality or live account access. Use `--ai-edit` with the native UI smoke test to click the layer checkboxes, paint a selection, apply a single-layer edit and partial merge, and Undo. Use `--capture-ai-layers`, `--capture-ai-selection`, `--capture-ai-result`, `--capture-ai-blend`, or `--capture-ai-merge` to capture its clearly labeled mock previews without API charges.
 
 ```sh
 ./scripts/build.sh
@@ -27,7 +27,7 @@ CUTOUT_TEST_OUTPUT=/tmp/photo-cutout.png \
 
 The optional model test is skipped when no fixture is supplied. `CUTOUT_TEST_ALLURE=1` enables additional assertions for the maintainer’s private regression fixture, which is not shipped. Leave it unset when testing your own images. Core ML compilation and loading may be blocked by restrictive execution sandboxes.
 
-Layer regression tests cover batch import and failure rollback, independent transforms, reordering, visibility, duplication/deletion, crop, compositing, transparent hit testing, paste choices, multiple Finder files, and AI flattening/Undo. Clipboard tests need access to the macOS pasteboard service. `window-test.sh` opens an isolated native window to verify multiple tabs, independent history, menu and clipboard routing, pending field commits, real double-click renaming, Return/Escape, the native Save panel’s suggested filename, and closing/reopening tabs. It requires a logged-in Mac desktop.
+Layer regression tests cover batch import and failure rollback, independent transforms, reordering, visibility, duplication/deletion, crop, compositing, transparent hit testing, paste choices, multiple Finder files, and AI layer selection/merging/Undo. Clipboard tests need access to the macOS pasteboard service. `window-test.sh` opens an isolated native window to verify multiple tabs, independent history, menu and clipboard routing, pending field commits, real double-click renaming, Return/Escape, the native Save panel’s suggested filename, and closing/reopening tabs. It requires a logged-in Mac desktop.
 
 The native UI smoke test opens its own window, exercises numeric editing and undo, and optionally captures the content. It needs a logged-in Mac desktop, but no Accessibility or screen-recording permission:
 

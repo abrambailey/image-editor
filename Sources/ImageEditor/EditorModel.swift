@@ -582,9 +582,7 @@ final class EditorModel: ObservableObject, Identifiable {
         endGesture()
         clearSelection()
         do {
-            let canvas = try ImageEngine.render(layers: document.layers, canvas: document.canvas,
-                                                background: document.background, format: .png)
-            aiEdit = AIEditSession(original: canvas, client: client, loadCredential: loadCredential)
+            aiEdit = try AIEditSession(document: document, client: client, loadCredential: loadCredential)
             status = "Sunburst cloud editing · Review the result before applying."
         } catch { errorMessage = error.localizedDescription }
     }
@@ -597,14 +595,26 @@ final class EditorModel: ObservableObject, Identifiable {
 
     func applyAIEdit() {
         guard let session = aiEdit, let image = session.applicableImage else { return }
+        let selected = document.layers.filter { session.selectedLayerIDs.contains($0.id) }
+        guard !selected.isEmpty, selected.count == session.selectedLayerIDs.count,
+              let topmost = selected.last else { return }
         checkpoint()
-        let original = document.layers.count == 1 ? document.original ?? session.original : session.original
-        let layer = ImageLayer(image: image, original: original,
-                               backgroundRemovalSource: image,
-                               sourceBounds: CGRect(x: 0, y: 0, width: image.width, height: image.height),
-                               name: "Sunburst result", frame: CGRect(origin: .zero, size: document.canvas))
-        document.layers = [layer]
-        document.selectedLayerID = layer.id
+        if selected.count == 1, let index = document.layers.firstIndex(where: { $0.id == topmost.id }) {
+            document.layers[index].commitPixels(image)
+            document.layers[index].isCutout = false
+            document.selectedLayerID = topmost.id
+        } else {
+            let layer = ImageLayer(image: image, original: session.original,
+                                   backgroundRemovalSource: image,
+                                   sourceBounds: CGRect(x: 0, y: 0, width: image.width, height: image.height),
+                                   name: "Sunburst result", frame: CGRect(origin: .zero, size: document.canvas),
+                                   isVisible: selected.contains(where: \.isVisible))
+            document.layers = document.layers.compactMap { existing in
+                if existing.id == topmost.id { return layer }
+                return session.selectedLayerIDs.contains(existing.id) ? nil : existing
+            }
+            document.selectedLayerID = layer.id
+        }
         session.close()
         aiEdit = nil
         status = "Sunburst edit applied · ⌘Z restores the previous layers and placement."

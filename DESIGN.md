@@ -133,6 +133,12 @@ Plain stacked sections use headings and dividers, with menus for presets and ref
 
 The scrolling form and fixed Export controls share a content width: the 276-point inspector minus its two 18-point insets and the native regular scrollbar width. The form stays leading-aligned whether the native scrollbar overlays its viewport or consumes space. This preserves the right-side gutter without double-counting it when the form overflows, and keeps the controls aligned when an overlay scrollbar fades out.
 
+### Sunburst layer selection
+
+The AI inspector starts with Layers to edit: native checkboxes beside 28-point image thumbnails, layer names, and an eye-slash symbol for hidden layers. Rows follow the layer inspector’s front-to-back order, with the active layer checked initially. The preview displays only the chosen input. The helper states whether Apply edits one layer in place or combines several; the fixed Apply area repeats this scope. Other layers retain their pixels and placement. Choices lock while generating and reviewing; Change Layers discards the preview before reopening the picker. Empty selection disables generation and painting. The existing scrolling inspector, native controls, semantic colors, and fixed action area remain.
+
+Verification: 46 regression checks completed with zero failures and one optional Core ML fixture skipped. Native checkbox, painting, preview, single-layer Apply, partial-merge Apply, and Undo checks passed at default/light and minimum/dark sizes. Evidence: `.impeccable/review/ai-layers-{desktop,compact}{,-selection,-result,-merge}.png`. All generated previews use a labeled mock service; no live request was sent. Release build and signature verification passed.
+
 ### Canvas
 
 A ten-point checkerboard represents alpha. Dragging moves the selected image; corner dragging preserves aspect ratio. Center snapping displays pink guides, with Option disabling snapping. Arrow keys move one pixel, or ten with Shift. Dimension text sits above the canvas; zoom controls describe preview fit in the status bar.

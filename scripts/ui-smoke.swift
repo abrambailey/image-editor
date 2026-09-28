@@ -210,9 +210,47 @@ struct UISmoke {
                 print("PASS native crop selection, move, edge/corner resize, zoom, keyboard, pending fields and undo/redo")
             }
             if CommandLine.arguments.contains("--ai-edit") {
+                func check(_ condition: Bool, _ message: String) {
+                    guard condition else { print("FAIL AI layers: \(message)"); exit(1) }
+                }
+                let fixtureHistory = model.undoStack.count
+                model.duplicateLayer(); model.duplicateLayer()
+                let ids = model.document.layers.map(\.id)
+                model.renameLayer(ids[0], to: "Back image")
+                model.renameLayer(ids[1], to: "Product detail")
+                model.renameLayer(ids[2], to: "Hidden reference")
+                model.toggleLayerVisibility(ids[2]); model.selectLayer(ids[1])
+                let beforeAI = model.document
                 model.beginAIEdit(client: PreviewImageEditor(), loadCredential: false)
                 guard let session = model.aiEdit else { print("FAIL missing AI session"); exit(1) }
                 session.prompt = "Make the casing brushed silver. Keep the lettering and the wire unchanged."
+                session.apiKey = "ui-fixture-not-a-real-key"
+                session.connectionExpanded = false
+                try? await Task.sleep(nanoseconds: 180_000_000)
+                @MainActor func toggleLayer(_ id: UUID) async {
+                    // SwiftUI draws these controls without NSButton subviews.
+                    // Click the checkbox in the three-row fixture, ordered front to back.
+                    let row = Array(ids.reversed()).firstIndex(of: id)!
+                    let y = CGFloat(58 + row * 38)
+                    let point = CGPoint(x: host.bounds.width - 250, y: host.isFlipped ? y : host.bounds.height - y)
+                    let location = host.convert(point, to: nil)
+                    for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                        let event = NSEvent.mouseEvent(with: type, location: location, modifierFlags: [],
+                            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                            context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0)!
+                        NSApp.postEvent(event, atStart: false)
+                    }
+                    try? await Task.sleep(nanoseconds: 120_000_000)
+                }
+                check(session.selectedLayerIDs == Set([ids[1]]), "defaults to active layer")
+                await toggleLayer(ids[1])
+                check(!session.canGenerate, "empty layer choice disables generation")
+                await toggleLayer(ids[1])
+                await toggleLayer(ids[0])
+                check(session.selectedLayerIDs == Set([ids[0], ids[1]]), "checkbox includes another layer")
+                capture("--capture-ai-layers")
+                await toggleLayer(ids[0])
+                check(session.original === beforeAI.image, "single layer preview uses its image")
                 session.brushEnabled = true
                 try? await Task.sleep(nanoseconds: 180_000_000)
                 @MainActor func findEditCanvas(_ view: NSView) -> AIEditCanvasView? {
@@ -248,8 +286,27 @@ struct UISmoke {
                 capture("--capture-ai-blend")
                 model.applyAIEdit()
                 guard model.aiEdit == nil else { print("FAIL applying AI edit"); exit(1) }
+                check(model.document.layers.map(\.id) == ids, "single edit retains the stack")
+                check(model.document.frame == beforeAI.frame, "single edit retains placement")
+                check(model.document.layers[0].image === beforeAI.layers[0].image, "unselected image preserved")
+                check(!model.document.layers[2].isVisible, "hidden layer preserved")
                 model.undo()
-                print("PASS native AI selection painting, preview, blend and apply (mock API)")
+                model.beginAIEdit(client: PreviewImageEditor(), loadCredential: false)
+                guard let multiple = model.aiEdit else { print("FAIL missing second AI session"); exit(1) }
+                multiple.setLayerIncluded(ids[0], included: true)
+                multiple.prompt = "Fixture"; multiple.apiKey = "ui-fixture-not-a-real-key"
+                multiple.connectionExpanded = false; multiple.generate()
+                let multiDeadline = Date().addingTimeInterval(30)
+                while multiple.isWorking && Date() < multiDeadline { try? await Task.sleep(nanoseconds: 30_000_000) }
+                check(multiple.result != nil, "multiple-layer mock result")
+                multiple.message = "UI test fixture · No request was sent to Sunburst."
+                try? await Task.sleep(nanoseconds: 180_000_000)
+                capture("--capture-ai-merge")
+                model.applyAIEdit()
+                check(model.document.layers.count == 2, "only chosen layers merge")
+                check(model.document.layers[1].id == ids[2], "unselected hidden layer remains above result")
+                while model.undoStack.count > fixtureHistory { model.undo() }
+                print("PASS native AI layer checkboxes, empty scope, painting, preview, blend, single edit and partial merge (mock API)")
             }
             if CommandLine.arguments.contains("--layers") {
                 func check(_ condition: Bool, _ message: String) {

@@ -49,10 +49,11 @@ struct AIEditView: View {
     private var previewHint: String {
         if session.isWorking { return "You can stop waiting without changing the original." }
         if session.result == nil {
-            return session.brushEnabled ? "Paint the area to change. Include nearby shadows or reflections if needed." : "The current canvas will be sent as the reference image."
+            if !session.hasLayers { return "Choose at least one layer in Layers to edit." }
+            return session.brushEnabled ? "Paint the area to change. Include nearby shadows or reflections if needed." : "Only the selected layers shown here will be sent as the reference image."
         }
         switch session.preview {
-        case .original: return "Original canvas · Choose Sunburst or Blended to apply an edit."
+        case .original: return "Original layers · Choose Sunburst or Blended to apply an edit."
         case .generated: return "Full Sunburst result · Check for changes elsewhere in the image."
         case .blended: return session.isBlending ? "Updating the blend…" : "Selected area blended into the original · Check the boundary for seams."
         }
@@ -62,6 +63,8 @@ struct AIEditView: View {
         VStack(spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
+                    layerPicker
+                    Divider()
                     VStack(alignment: .leading, spacing: 8) {
                         Text("What would you like to change?").font(.system(size: 13, weight: .semibold))
                         TextEditor(text: $session.prompt)
@@ -72,7 +75,7 @@ struct AIEditView: View {
                             .accessibilityLabel("Edit instruction")
                         Text("For example, “Make the casing brushed silver and keep the lettering.”")
                             .font(.system(size: 11)).foregroundStyle(.secondary)
-                    }.disabled(session.isWorking)
+                    }.disabled(session.isWorking || !session.hasLayers)
                     Divider()
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Edit area").font(.system(size: 13, weight: .semibold))
@@ -112,7 +115,7 @@ struct AIEditView: View {
                                     .font(.system(size: 11)).foregroundStyle(.secondary)
                             }
                         }
-                    }.disabled(session.isWorking)
+                    }.disabled(session.isWorking || !session.hasLayers)
                     Divider()
                     DisclosureGroup("Connection", isExpanded: $session.connectionExpanded) {
                         VStack(alignment: .leading, spacing: 10) {
@@ -141,7 +144,7 @@ struct AIEditView: View {
             }
             Divider()
             VStack(alignment: .leading, spacing: 10) {
-                Text("Generate sends this canvas and instruction to OpenAI. API usage is billed separately from ChatGPT.")
+                Text("Generate sends the selected layers and instruction to OpenAI. API usage is billed separately from ChatGPT.")
                     .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 if session.result == nil {
                     Button(action: session.generate) { Text("Generate Edit").frame(maxWidth: .infinity) }
@@ -157,12 +160,48 @@ struct AIEditView: View {
                         Text(session.preview == .blended ? "Use Blended Result" : "Use Sunburst Result").frame(maxWidth: .infinity)
                     }.buttonStyle(.borderedProminent).controlSize(.large)
                         .disabled(session.applicableImage == nil)
-                    Text("Applying combines visible layers into one image. Undo restores your layers.").font(.system(size: 11)).foregroundStyle(.secondary)
+                    Text(session.selectedLayerIDs.count == 1 ? "Applies to one layer. Undo restores the previous image." : "Combines only the \(session.selectedLayerIDs.count) selected layers. Undo restores them.")
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
                 }
                 Button("Cancel", action: close).frame(maxWidth: .infinity)
                     .keyboardShortcut(.cancelAction)
             }.padding(18)
         }.background(Color(nsColor: .controlBackgroundColor))
+    }
+
+    private var layerPicker: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Layers to edit").font(.system(size: 13, weight: .semibold))
+            ForEach(session.layers.reversed()) { layer in
+                Toggle(isOn: Binding(
+                    get: { session.selectedLayerIDs.contains(layer.id) },
+                    set: { session.setLayerIncluded(layer.id, included: $0) }
+                )) {
+                    HStack(spacing: 8) {
+                        Image(nsImage: NSImage(cgImage: layer.image, size: .zero))
+                            .resizable().scaledToFit().frame(width: 28, height: 28)
+                            .accessibilityHidden(true)
+                        Text(layer.name).lineLimit(1).truncationMode(.middle)
+                        if !layer.isVisible {
+                            Image(systemName: "eye.slash").foregroundStyle(.secondary)
+                                .help("Hidden in the canvas. Selecting it includes it in this edit.")
+                        }
+                    }
+                }
+                .toggleStyle(.checkbox).font(.system(size: 12))
+                .disabled(!session.canChooseLayers)
+                .help(layer.name)
+                .accessibilityLabel("Include \(layer.name)\(layer.isVisible ? "" : ", hidden layer")")
+                .accessibilityIdentifier("ai-layer-\(layer.id)")
+            }
+            Text(session.layerSummary).font(.system(size: 11)).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .help("When combining layers, the result takes the topmost selected layer’s position in the stack.")
+            if session.result != nil {
+                Button("Change Layers", action: session.reviseLayers).disabled(session.isWorking)
+                    .help("Discard this preview and choose different layers.")
+            }
+        }
     }
 }
 
@@ -187,7 +226,7 @@ final class AIEditCanvasView: NSView {
         return CGRect(x: (bounds.width - size.width * scale) / 2, y: (bounds.height - size.height * scale) / 2,
                       width: size.width * scale, height: size.height * scale)
     }
-    private var canPaint: Bool { session.brushEnabled && !session.isWorking && session.result == nil }
+    private var canPaint: Bool { session.hasLayers && session.brushEnabled && !session.isWorking && session.result == nil }
 
     init(session: AIEditSession) {
         self.session = session

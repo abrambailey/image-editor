@@ -169,26 +169,168 @@ final class LayerTests {
         expectEqual(model.document.layers.count, existing.count + 2)
     }
 
+    private func expectUnchanged(_ actual: ImageLayer, _ expected: ImageLayer) {
+        expectEqual(actual.id, expected.id)
+        expectTrue(actual.image === expected.image)
+        expectTrue(actual.original === expected.original)
+        expectTrue(actual.backgroundRemovalSource === expected.backgroundRemovalSource)
+        expectEqual(actual.frame, expected.frame)
+        expectEqual(actual.sourceBounds, expected.sourceBounds)
+        expectEqual(actual.name, expected.name)
+        expectEqual(actual.isVisible, expected.isVisible)
+        expectEqual(actual.isCutout, expected.isCutout)
+    }
+
+    func testAISingleLayerAndUndo() async throws {
+        let model = EditorModel(), service = FixtureImageEditor()
+        model.importImages([.data(try data(CGColor(gray: 0, alpha: 1)), name: "Back"),
+                            .data(try data(CGColor(gray: 0.5, alpha: 1)), name: "Edit me"),
+                            .data(try data(CGColor(gray: 1, alpha: 1)), name: "Hidden front")])
+        try await wait(model)
+        let ids = model.document.layers.map(\.id)
+        model.toggleLayerVisibility(ids[2])
+        model.selectLayer(ids[1])
+        model.startLayerCrop()
+        model.setCrop(width: 12, height: 7)
+        model.applyCrop()
+        model.setScale(150); model.setPosition(x: -5, y: 15)
+        model.setBackground(.white)
+        let before = model.document, history = model.undoStack.count
+        model.beginAIEdit(client: service, loadCredential: false)
+        let session = try unwrap(model.aiEdit)
+        expectEqual(session.selectedLayerIDs, Set([ids[1]]))
+        expectTrue(session.original === before.image)
+        expectEqual(session.original.width, 12); expectEqual(session.original.height, 7)
+        session.prompt = "Fixture"; session.apiKey = "test"; session.generate()
+        session.setLayerIncluded(ids[0], included: true)
+        expectEqual(session.selectedLayerIDs, Set([ids[1]])) // Scope is locked during the request.
+        try await fixtures.wait { session.isWorking }
+        let expectedRequest = try AIEditImaging.prepare(unwrap(before.image), strokes: [])
+        expectEqual(await service.receivedImage, expectedRequest.image)
+        session.setLayerIncluded(ids[0], included: true)
+        expectEqual(session.selectedLayerIDs, Set([ids[1]])) // The result cannot be retargeted.
+        let accepted = try unwrap(session.applicableImage)
+        model.applyAIEdit()
+        expectEqual(model.document.layers.map(\.id), ids)
+        expectUnchanged(model.document.layers[0], before.layers[0])
+        expectUnchanged(model.document.layers[2], before.layers[2])
+        let edited = model.document.layers[1]
+        expectTrue(edited.image === accepted)
+        expectTrue(edited.original === before.original)
+        expectTrue(edited.backgroundRemovalSource === accepted)
+        expectEqual(edited.name, before.layers[1].name)
+        expectEqual(edited.frame, before.frame)
+        expectEqual(edited.isVisible, before.layers[1].isVisible)
+        expectEqual(model.document.canvas, before.canvas)
+        expectEqual(model.document.background, before.background)
+        expectEqual(model.undoStack.count, history + 1)
+        model.undo()
+        for (actual, expected) in zip(model.document.layers, before.layers) { expectUnchanged(actual, expected) }
+        model.redo(); expectTrue(model.document.image === accepted)
+        model.restoreOriginal(); expectTrue(model.document.image === before.original)
+        expectUnchanged(model.document.layers[0], before.layers[0])
+        expectUnchanged(model.document.layers[2], before.layers[2])
+
+        model.toggleLayerVisibility(ids[1])
+        model.beginAIEdit(client: service, loadCredential: false)
+        let hiddenSession = try unwrap(model.aiEdit)
+        expectTrue(hiddenSession.original === model.document.image)
+        hiddenSession.prompt = "Fixture"; hiddenSession.apiKey = "test"; hiddenSession.generate()
+        try await fixtures.wait { hiddenSession.isWorking }
+        model.applyAIEdit()
+        expectTrue(!model.document.layers[1].isVisible)
+        expectEqual(model.document.layers.map(\.id), ids)
+    }
+
     func testAICompositeAndUndo() async throws {
         let model = EditorModel()
         model.setCanvas(width: 100, height: 80); model.setPadding(0)
         model.importImages([.data(try data(CGColor(gray: 0, alpha: 1)), name: "Back"),
-                            .data(try data(CGColor(gray: 1, alpha: 1)), name: "Front")])
+                            .data(try data(CGColor(gray: 0.5, alpha: 1)), name: "Between"),
+                            .data(try data(CGColor(gray: 1, alpha: 1)), name: "Front"),
+                            .data(try data(CGColor(gray: 0.2, alpha: 1)), name: "Hidden top")])
         try await wait(model)
+        let ids = model.document.layers.map(\.id)
+        model.toggleLayerVisibility(ids[0]); model.toggleLayerVisibility(ids[3])
+        model.selectLayer(ids[2])
         model.setScale(100); model.setPosition(x: 10, y: 5)
+        model.setBackground(.white)
         let snapshot = model.document
-        let expected = try ImageEngine.render(layers: snapshot.layers, canvas: snapshot.canvas, background: snapshot.background, format: .png)
-        model.beginAIEdit(client: FixtureImageEditor(), loadCredential: false)
+        let history = model.undoStack.count, service = FixtureImageEditor()
+        var back = snapshot.layers[0]; back.isVisible = true
+        let expected = try ImageEngine.render(layers: [back, snapshot.layers[2]], canvas: snapshot.canvas,
+                                              background: .transparent, format: .png)
+        model.beginAIEdit(client: service, loadCredential: false)
         let session = try unwrap(model.aiEdit)
+        session.setLayerIncluded(ids[0], included: true)
         expectEqual(try fixtures.pixels(session.original), try fixtures.pixels(expected))
+        expectTrue(try AIEditImaging.hasTransparency(session.original))
         session.prompt = "Fixture"; session.apiKey = "test"; session.generate()
-        let deadline = Date().addingTimeInterval(10)
-        while session.isWorking && Date() < deadline { try await Task.sleep(nanoseconds: 10_000_000) }
+        try await fixtures.wait { session.isWorking }
+        expectEqual(await service.receivedImage, try AIEditImaging.prepare(expected, strokes: []).image)
         expectTrue(session.applicableImage != nil)
-        model.applyAIEdit(); expectEqual(model.document.layers.count, 1)
+        model.applyAIEdit(); expectEqual(model.document.layers.count, 3)
+        expectUnchanged(model.document.layers[0], snapshot.layers[1])
+        expectUnchanged(model.document.layers[2], snapshot.layers[3])
+        let merged = model.document.layers[1]
+        expectEqual(model.document.selectedLayerID, merged.id)
+        expectTrue(merged.original === session.original)
+        expectTrue(merged.isVisible)
+        expectEqual(merged.frame, CGRect(origin: .zero, size: snapshot.canvas))
+        expectEqual(model.document.background, snapshot.background)
+        expectEqual(model.undoStack.count, history + 1)
         model.undo()
         expectEqual(model.document.layers.map(\.id), snapshot.layers.map(\.id))
-        expectEqual(model.document.layers.map(\.frame), snapshot.layers.map(\.frame))
-        model.redo(); expectEqual(model.document.layers.count, 1)
+        for (actual, expected) in zip(model.document.layers, snapshot.layers) { expectUnchanged(actual, expected) }
+        model.redo(); expectEqual(model.document.layers.map(\.id), [ids[1], merged.id, ids[3]])
+    }
+
+    func testAILayerSelectionAndCancellation() async throws {
+        let model = EditorModel(), service = FixtureImageEditor()
+        model.importImages([.data(try data(CGColor(gray: 0, alpha: 1)), name: "Back"),
+                            .data(try data(CGColor(gray: 1, alpha: 1)), name: "Front")])
+        try await wait(model)
+        let before = model.document, history = model.undoStack.count, ids = before.layers.map(\.id)
+        model.beginAIEdit(client: service, loadCredential: false)
+        let session = try unwrap(model.aiEdit)
+        session.prompt = "Fixture"; session.apiKey = "test"
+        let stroke = EditStroke(points: [CGPoint(x: 0.4, y: 0.5)], diameter: 0.2)
+        session.addStroke(stroke)
+        session.setLayerIncluded(ids[1], included: false)
+        expectTrue(!session.hasSelection && !session.canGenerate)
+        session.generate(); session.addStroke(stroke)
+        expectTrue(!session.isWorking && !session.hasSelection)
+        expectEqual(await service.requestCount, 0)
+        session.setLayerIncluded(UUID(), included: true)
+        expectTrue(!session.hasLayers)
+        session.setLayerIncluded(ids[0], included: true)
+        expectTrue(session.original === before.layers[0].image)
+        session.addStroke(stroke); session.generate()
+        try await fixtures.wait { session.isWorking || session.isBlending }
+        session.feather = 30; session.refreshBlend()
+        session.reviseLayers()
+        session.setLayerIncluded(ids[1], included: true)
+        expectTrue(session.result == nil && session.blended == nil && session.applicableImage == nil)
+        expectTrue(!session.hasSelection && !session.isBlending)
+        session.generate()
+        try await fixtures.wait { session.isWorking || session.isBlending }
+        expectTrue(session.result != nil && session.blended == nil)
+        model.applyAIEdit(); expectEqual(model.document.layers.count, 1) // Explicitly selecting all merges all.
+        model.undo()
+        for (actual, expected) in zip(model.document.layers, before.layers) { expectUnchanged(actual, expected) }
+
+        model.beginAIEdit(client: service, loadCredential: false)
+        let canceled = try unwrap(model.aiEdit)
+        canceled.prompt = "Fixture"; canceled.apiKey = "test"
+        await service.configure(delay: 300_000_000)
+        canceled.generate()
+        try await Task.sleep(nanoseconds: 100_000_000)
+        canceled.cancelRequest()
+        canceled.setLayerIncluded(ids[0], included: true)
+        try await Task.sleep(nanoseconds: 400_000_000)
+        expectTrue(canceled.result == nil && canceled.applicableImage == nil)
+        model.cancelAIEdit()
+        expectEqual(model.undoStack.count, history)
+        for (actual, expected) in zip(model.document.layers, before.layers) { expectUnchanged(actual, expected) }
     }
 }
