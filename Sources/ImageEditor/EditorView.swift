@@ -205,24 +205,20 @@ struct EditorView: View {
                         } else {
                             section("Canvas") {
                                 HStack(spacing: 10) {
-                                    PixelField("Width", value: model.document.canvas.width, range: 1...8192) { model.setCanvas(width: $0) }
-                                    PixelField("Height", value: model.document.canvas.height, range: 1...8192) { model.setCanvas(height: $0) }
+                                    PixelField("Width", value: model.document.canvas.width, range: model.canvasDimensionRange(.width)) { model.setCanvas(width: $0) }
+                                    PixelField("Height", value: model.document.canvas.height, range: model.canvasDimensionRange(.height)) { model.setCanvas(height: $0) }
                                 }
                                 HStack {
-                                    Menu("Presets") {
-                                        Button("Square · 1200 × 1200") { model.setCanvas(width: 1200, height: 1200) }
-                                        Button("Square · 2000 × 2000") { model.setCanvas(width: 2000, height: 2000) }
-                                        Button("Landscape · 1600 × 1200") { model.setCanvas(width: 1600, height: 1200) }
-                                        Button("Portrait · 1200 × 1600") { model.setCanvas(width: 1200, height: 1600) }
-                                        if let original = model.document.original {
-                                            Button("Original · \(original.width) × \(original.height)") {
-                                                model.setCanvas(width: Double(original.width), height: Double(original.height))
-                                            }
-                                        }
-                                    }
-                                    Button { model.setCanvas(width: model.document.canvas.height, height: model.document.canvas.width) } label: {
+                                    AspectRatioMenu(ratio: model.document.canvasAspectRatio,
+                                                    original: model.document.original.map { AspectRatio($0.width, $0.height) },
+                                                    select: model.setCanvasAspectRatio)
+                                    Button(action: model.swapCanvasDimensions) {
                                         Image(systemName: "arrow.left.arrow.right")
                                     }.help("Swap width and height").accessibilityLabel("Swap canvas width and height")
+                                }
+                                if model.document.canvasAspectRatio != nil {
+                                    Text("Width and height are linked. Presets change proportions; layers keep their size.")
+                                        .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                                 }
                                 Picker("Background", selection: Binding(get: { model.document.background }, set: model.setBackground)) {
                                     ForEach(CanvasBackground.allCases) { Text($0.rawValue).tag($0) }
@@ -302,8 +298,19 @@ struct EditorView: View {
                     Picker("Format", selection: $model.format) {
                         ForEach(ExportFormat.allCases) { Text($0.rawValue).tag($0) }
                     }.pickerStyle(.segmented).labelsHidden()
-                    Toggle("Include canvas padding", isOn: $model.includeCanvasPadding)
+                    Toggle("Resize for export", isOn: Binding(get: { model.exportResize != nil }, set: model.setExportResizing))
+                        .font(.system(size: 11)).disabled(!model.hasImage)
+                    if let size = model.exportOutputSize {
+                        HStack(spacing: 10) {
+                            PixelField("Export width", value: size.width, range: model.exportDimensionRange(.width)) { model.setExportDimension($0, axis: .width) }
+                            PixelField("Export height", value: size.height, range: model.exportDimensionRange(.height)) { model.setExportDimension($0, axis: .height) }
+                        }
+                        Text("Linked to the canvas ratio. Includes canvas padding. Dimensions round to whole pixels.")
+                            .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    }
+                    Toggle("Include canvas padding", isOn: Binding(get: { model.exportIncludesCanvasPadding }, set: { model.includeCanvasPadding = $0 }))
                         .font(.system(size: 11))
+                        .disabled(model.exportResize != nil)
                         .help("Keep the full canvas dimensions and padding when exporting or copying. Off exports only the visible image bounds.")
                     if model.format == .jpeg {
                         HStack {
@@ -380,13 +387,24 @@ struct EditorView: View {
         section(model.cropTarget == .layer ? "Crop Layer" : "Crop Canvas") {
             Text("Drag to select an area. Drag inside the selection to move it, or use its edges and corners to resize.")
                 .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            HStack {
+                AspectRatioMenu(ratio: model.cropAspectRatio, original: AspectRatio(size: model.cropPixelSize),
+                                select: model.setCropAspectRatio)
+                Button(action: model.swapCropAspectRatio) { Image(systemName: "arrow.left.arrow.right") }
+                    .disabled(model.cropAspectRatio == nil)
+                    .help("Swap crop ratio").accessibilityLabel("Swap crop ratio")
+            }
+            if model.cropAspectRatio != nil {
+                Text("Ratio stays locked while drawing, resizing, or entering dimensions. Rounded to source pixels.")
+                    .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
             HStack(spacing: 10) {
                 PixelField("Crop X", value: crop.minX, range: 0...(model.cropPixelSize.width - crop.width)) { model.setCrop(x: $0) }
                 PixelField("Crop Y", value: crop.minY, range: 0...(model.cropPixelSize.height - crop.height)) { model.setCrop(y: $0) }
             }
             HStack(spacing: 10) {
-                PixelField("Crop width", value: crop.width, range: 1...(model.cropPixelSize.width - crop.minX)) { model.setCrop(width: $0) }
-                PixelField("Crop height", value: crop.height, range: 1...(model.cropPixelSize.height - crop.minY)) { model.setCrop(height: $0) }
+                PixelField("Crop width", value: crop.width, range: model.cropDimensionRange(.width)) { model.setCrop(width: $0) }
+                PixelField("Crop height", value: crop.height, range: model.cropDimensionRange(.height)) { model.setCrop(height: $0) }
             }
             Button("Reset Selection", action: model.resetCrop)
             Divider().padding(.vertical, 8)
@@ -404,6 +422,36 @@ struct EditorView: View {
             Text(title).font(.system(size: 13, weight: .semibold))
             content()
         }
+    }
+}
+
+struct AspectRatioMenu: View {
+    let ratio: AspectRatio?
+    let original: AspectRatio?
+    let select: (AspectRatio?) -> Void
+
+    var body: some View {
+        Menu(ratio.map { "Ratio · \($0.label)" } ?? "Ratio · Freeform") {
+            Button("Freeform", action: { select(nil) })
+            if let original {
+                Button("Original ratio · \(original.label)") { select(original) }
+            }
+            Divider()
+            ForEach(AspectRatioPreset.common) { preset in
+                Button(preset.label) { select(preset.ratio) }
+            }
+            Divider()
+            ForEach(AspectRatioPreset.social.indices, id: \.self) { index in
+                let platform = AspectRatioPreset.social[index]
+                Menu(platform.name) {
+                    ForEach(platform.presets) { preset in
+                        Button(preset.label) { select(preset.ratio) }
+                    }
+                }
+            }
+        }
+        .accessibilityLabel("Aspect ratio")
+        .help("Choose proportions for this canvas or crop, independent of export resolution")
     }
 }
 
@@ -437,7 +485,7 @@ struct PixelField: View {
             .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(focused ? Color.accentColor : Color.primary.opacity(0.18), lineWidth: focused ? 2 : 0.5))
         }
         .onAppear { text = formatted(value) }
-        .onChange(of: value) { _, new in if !focused { text = formatted(new) } }
+        .onChange(of: value) { _, new in text = formatted(new) }
         .onChange(of: focused) { _, new in if !new { save() } }
         .onReceive(NotificationCenter.default.publisher(for: .commitImageEditorFields)) { notification in
             guard notification.object as? EditorModel === model else { return }

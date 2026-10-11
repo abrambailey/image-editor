@@ -209,6 +209,97 @@ struct UISmoke {
                 try? await Task.sleep(nanoseconds: 150_000_000)
                 print("PASS native crop selection, move, edge/corner resize, zoom, keyboard, pending fields and undo/redo")
             }
+            if CommandLine.arguments.contains("--ratios") {
+                @MainActor func check(_ condition: Bool, _ message: String) {
+                    guard condition else { print("FAIL ratios: \(message)"); exit(1) }
+                }
+                @MainActor func findCanvas(_ view: NSView) -> EditorCanvas? {
+                    if let canvas = view as? EditorCanvas { return canvas }
+                    return view.subviews.lazy.compactMap(findCanvas).first
+                }
+                @MainActor func settle() async { try? await Task.sleep(nanoseconds: 150_000_000) }
+                @MainActor func edit(_ name: String, _ text: String) async {
+                    guard let field = fields(host).first(where: { $0.placeholderString == name }) else {
+                        print("FAIL ratios: missing \(name) field"); exit(1)
+                    }
+                    window.makeFirstResponder(field)
+                    await settle()
+                    field.stringValue = text
+                    field.delegate?.controlTextDidChange?(Notification(name: NSControl.textDidChangeNotification, object: field))
+                    await settle()
+                }
+                guard let canvas = findCanvas(host), model.hasImage else { exit(1) }
+                @MainActor func mouse(_ type: NSEvent.EventType, _ point: CGPoint) -> NSEvent {
+                    let bounds = CGRect(origin: .zero, size: model.document.canvas)
+                    let preview = model.isCropping && model.cropTarget == .layer ? bounds.union(model.cropBounds) : bounds
+                    let scale = min((canvas.bounds.width - 96) / preview.width, (canvas.bounds.height - 100) / preview.height) * model.zoom
+                    let location = CGPoint(x: (canvas.bounds.width - preview.width * scale) / 2 + (point.x - preview.minX) * scale,
+                                           y: (canvas.bounds.height - preview.height * scale) / 2 + (point.y - preview.minY) * scale)
+                    return NSEvent.mouseEvent(with: type, location: canvas.convert(location, to: nil), modifierFlags: [],
+                        timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+                }
+                @MainActor func drag(_ start: CGPoint, _ end: CGPoint) {
+                    canvas.mouseDown(with: mouse(.leftMouseDown, start))
+                    canvas.mouseDragged(with: mouse(.leftMouseDragged, end))
+                    canvas.mouseUp(with: mouse(.leftMouseUp, end))
+                }
+                let before = model.document
+                model.setCanvasAspectRatio(AspectRatio(9, 16))
+                await settle()
+                await edit("Width", "450")
+                model.prepareForTabSwitch()
+                await settle()
+                check(model.document.canvas == CGSize(width: 450, height: 800), "canvas fields preserve selected ratio")
+                check(fields(host).first(where: { $0.placeholderString == "Height" })?.stringValue == "800", "linked height refreshes")
+                model.setExportResizing(true)
+                await settle()
+                await edit("Export width", "180")
+                var output: CGSize?
+                model.chooseExportDestination = { export, choose in output = export.state.outputSize; choose(nil) }
+                model.exportImage()
+                await settle()
+                check(output == CGSize(width: 180, height: 320), "Export commits pending width and links height")
+                check(fields(host).first(where: { $0.placeholderString == "Export height" })?.stringValue == "320", "export height refreshes")
+                await edit("Export height", "640")
+                model.prepareForTabSwitch()
+                await settle()
+                check(model.exportOutputSize == CGSize(width: 360, height: 640), "export height links width")
+                check(model.document.canvas == CGSize(width: 450, height: 800), "export resizing leaves canvas intact")
+                capture("--capture-ratio-export")
+                model.startCrop(); model.setCropAspectRatio(AspectRatio(4, 5))
+                await settle()
+                // Draw outside the current selection, then pull an edge and corner horizontally.
+                drag(CGPoint(x: 20, y: 100), CGPoint(x: 220, y: 410))
+                check(model.cropRect == CGRect(x: 20, y: 100, width: 200, height: 250), "ratio selection: \(String(describing: model.cropRect))")
+                drag(CGPoint(x: 220, y: 225), CGPoint(x: 280, y: 225))
+                check(model.cropRect == CGRect(x: 20, y: 63, width: 260, height: 325), "edge keeps ratio and opposite midpoint: \(String(describing: model.cropRect))")
+                let cornerBefore = model.cropRect!
+                drag(CGPoint(x: cornerBefore.maxX, y: cornerBefore.maxY), CGPoint(x: cornerBefore.maxX + 40, y: cornerBefore.maxY))
+                check(model.cropRect?.size == CGSize(width: 300, height: 375), "horizontal corner drag adjusts both dimensions")
+                let moveBefore = model.cropRect!
+                drag(CGPoint(x: moveBefore.midX, y: moveBefore.midY), CGPoint(x: -500, y: -500))
+                check(model.cropRect?.size == moveBefore.size && model.cropRect?.origin == .zero, "move clamps without shrinking")
+                await edit("Crop height", "250")
+                model.prepareForTabSwitch()
+                await settle()
+                check(model.cropRect?.size == CGSize(width: 200, height: 250), "crop height links width")
+                capture("--capture-ratio-crop")
+                model.cancelCrop()
+                model.startLayerCrop(); model.setCropAspectRatio(AspectRatio(9, 16))
+                await settle()
+                let pixels = model.cropPixelRect!
+                check(abs(pixels.height - pixels.width * 16 / 9) <= 2, "scaled layer uses source-pixel ratio")
+                capture("--capture-ratio-layer")
+                model.applyCrop()
+                check(model.document.image!.width == Int(pixels.width) && model.document.image!.height == Int(pixels.height), "layer ratio applies exact preview pixels")
+                model.undo()
+                check(model.document.image === before.image, "ratio layer crop Undo restores image")
+                model.setExportResizing(false)
+                model.undo(); model.undo()
+                await settle()
+                check(model.document.canvas == before.canvas && model.document.canvasAspectRatio == nil, "canvas ratio Undo restores dimensions and lock")
+                print("PASS native ratio fields, linked export dimensions, pending commits, crop drawing/handles/movement, layer crop and Undo")
+            }
             if CommandLine.arguments.contains("--ai-edit") {
                 func check(_ condition: Bool, _ message: String) {
                     guard condition else { print("FAIL AI layers: \(message)"); exit(1) }

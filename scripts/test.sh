@@ -8,6 +8,7 @@ export IMAGE_EDITOR_MODEL_PATH="${IMAGE_EDITOR_MODEL_PATH:-$PWD/.build/models/Bi
 swiftc -O -parse-as-library -module-cache-path "$PWD/.build/module-cache" \
     Sources/ImageEditor/ForegroundExtractor.swift \
     Sources/ImageEditor/ImageEngine.swift \
+    Sources/ImageEditor/AspectRatio.swift \
     Sources/ImageEditor/EditorModel.swift Sources/ImageEditor/EditorWorkspace.swift \
     Sources/ImageEditor/SunburstClient.swift Sources/ImageEditor/AIEditImaging.swift Sources/ImageEditor/AIEditSession.swift \
     Tests/ImageEditorTests/*.swift \

@@ -84,6 +84,13 @@ related_targets: ["Sources/ImageEditor/CanvasView.swift","Sources/ImageEditor/Im
 - **Clipboard:** Copy Selection preserves the selected layer’s native pixels and ellipse alpha; Paste directly adds a layer with the copied placement. Composition Copy Image is unchanged.
 - **Evidence:** `layer-crop-{desktop,compact}.png`, `selection-{desktop,compact}.png`, and `pixel-tools-{desktop,compact}.png` under `.impeccable/review/`. Default light and minimum dark native checks cover crop → fit, rectangles/circles, Delete, responder-chain copy/paste, Undo, and off-canvas cropping. 42 regressions: zero failures, one optional model fixture skipped. Build and signature verification passed.
 
+## Ratio presets and export sizing
+
+- **Entry:** Ratio menus in Canvas, Crop Layer, and Crop Canvas, with common proportions, Original ratio, platform submenus from the supplied chart, Freeform, and a swap-orientation button.
+- **Behavior:** Canvas ratios keep approximately the current area and preserve layer size/center offsets. Selected ratios link numeric fields and constrain crop drawing and all eight handles in source or canvas pixels. Moving a crop clamps its position without shrinking it. Reset keeps the chosen ratio. Canvas ratio state and applied crops support Undo.
+- **Export:** Resize for export reveals linked pixel width/height fields in the fixed Export area. Either field drives the output, using the actual canvas ratio and whole-pixel rounding. Full canvas padding is required while resizing and the previous padding choice returns when disabled. PNG/JPG and PNG clipboard output share dimensions, bounded to 8,192 pixels per side; source pixels and editing geometry are preserved. Successful-save tracking includes output dimensions.
+- **Evidence:** Default light and minimum dark native checks passed field refresh, export action commits, ratio drawing, edge/corner handles, movement limits, source-pixel layer crop, and Undo. `.impeccable/review/ratio-{export,crop,layer}-{desktop,compact}.png` records the built interface. The visual/source review found no outstanding material issues; native captures omit the toolbar/titlebar. All 50 regressions completed with zero failures and one optional model fixture skipped. Release build and signature verification passed. No new design tokens or raster assets ship.
+
 ## Layer expansion
 
 - **Entry:** Outward arrows on each layer row; Expand Layer in its context menu and the Layer menu.

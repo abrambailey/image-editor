@@ -169,6 +169,14 @@ The native toolbar places import actions at navigation placement, document ident
 
 The two-line document title has 12-point horizontal and four-point vertical insets, with a bounded width and middle truncation for long filenames. On macOS 26 and newer its shared toolbar background is hidden, keeping passive document identity visually separate from toolbar buttons. Background removal uses the available `wand.and.stars` SF Symbol in both the toolbar and inspector.
 
+### Aspect ratios and export sizing
+
+Canvas and both crop inspectors share a native Ratio menu with common proportions, Original ratio, and Instagram / Facebook / X / LinkedIn / TikTok submenus. Labels show reduced ratios, including the supplied chart's unusual landscape, vertical, and cover proportions. Freeform removes the constraint, and the adjacent SF Symbol swaps orientation. Canvas presets retain approximate area and layer placement; linked fields and crop handles follow the chosen ratio, with whole-pixel rounding and Undo.
+
+The fixed Export area adds Resize for export. Enabling it reveals the existing paired PixelField controls for Export width and Export height, plus a helper explaining the linked canvas ratio, full-canvas padding, and rounding. Include canvas padding is visibly enabled and disabled while resizing; turning resizing off restores the previous choice. File export and PNG clipboard output use the same target dimensions without changing source layers or canvas geometry. Export dimensions participate in unexported-state tracking.
+
+Native default/light and minimum/dark checks passed linked field refresh, pending export commits, crop drawing, edge/corner handles, bounded movement, source-pixel layer crops, and Undo. The bounded visual/source review found no outstanding layout or interaction defects. All 50 regression checks completed with zero failures and one optional model fixture skipped; the release build and signature verification passed. Evidence: `.impeccable/review/ratio-{export,crop,layer}-{desktop,compact}.png`; captures omit the system toolbar/titlebar. The established Mac design is retained.
+
 ## Do's and Don'ts
 
 ### Do:

@@ -327,12 +327,17 @@ final class EditorCanvas: NSView, NSUserInterfaceValidations {
         if let model, let cropDrag, let start = dragOrigin {
             let point = canvasPoint(convert(event.locationInWindow, from: nil))
             var rect = originalFrame
+            var anchor = CGPoint(x: 0.5, y: 0.5)
+            var axis: ImageDimension?
+            var preservingSize = false
             switch cropDrag {
             case .select:
                 rect = CGRect(x: min(start.x, point.x), y: min(start.y, point.y),
                               width: abs(point.x - start.x), height: abs(point.y - start.y))
+                anchor = CGPoint(x: point.x < start.x ? 1 : 0, y: point.y < start.y ? 1 : 0)
             case .move:
                 rect = rect.offsetBy(dx: point.x - start.x, dy: point.y - start.y)
+                preservingSize = true
             case .resize(let handle):
                 let dx = point.x - start.x, dy = point.y - start.y
                 var left = rect.minX, right = rect.maxX, top = rect.minY, bottom = rect.maxY
@@ -344,8 +349,13 @@ final class EditorCanvas: NSView, NSUserInterfaceValidations {
                 if [0, 1, 4].contains(handle) { top = min(bottom - minHeight, max(limit.minY, top + dy)) }
                 if [2, 3, 6].contains(handle) { bottom = max(top + minHeight, min(limit.maxY, bottom + dy)) }
                 rect = CGRect(x: left, y: top, width: right - left, height: bottom - top)
+                let anchors = [CGPoint(x: 1, y: 1), CGPoint(x: 0, y: 1), CGPoint(x: 0, y: 0), CGPoint(x: 1, y: 0),
+                               CGPoint(x: 0.5, y: 1), CGPoint(x: 0, y: 0.5), CGPoint(x: 0.5, y: 0), CGPoint(x: 1, y: 0.5)]
+                anchor = anchors[handle]
+                axis = [4, 6].contains(handle) ? .height : [5, 7].contains(handle) ? .width
+                    : abs(dx / originalFrame.width) >= abs(dy / originalFrame.height) ? .width : .height
             }
-            model.updateCrop(rect)
+            model.updateCrop(rect, anchor: anchor, axis: axis, preservingSize: preservingSize)
             return
         }
         guard let model, let start = dragOrigin else { return }
@@ -407,10 +417,10 @@ final class EditorCanvas: NSView, NSUserInterfaceValidations {
             switch event.keyCode {
             case 36, 76: model.applyCrop()
             case 53: model.cancelCrop()
-            case 123: model.updateCrop(crop.offsetBy(dx: -dx, dy: 0))
-            case 124: model.updateCrop(crop.offsetBy(dx: dx, dy: 0))
-            case 125: model.updateCrop(crop.offsetBy(dx: 0, dy: dy))
-            case 126: model.updateCrop(crop.offsetBy(dx: 0, dy: -dy))
+            case 123: model.updateCrop(crop.offsetBy(dx: -dx, dy: 0), preservingSize: true)
+            case 124: model.updateCrop(crop.offsetBy(dx: dx, dy: 0), preservingSize: true)
+            case 125: model.updateCrop(crop.offsetBy(dx: 0, dy: dy), preservingSize: true)
+            case 126: model.updateCrop(crop.offsetBy(dx: 0, dy: -dy), preservingSize: true)
             default: super.keyDown(with: event)
             }
             return

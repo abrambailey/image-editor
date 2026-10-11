@@ -107,7 +107,12 @@ struct TestRunner {
         let layers = LayerTests()
         let selections = SelectionTests()
         let expansion = LayerExpansionTests()
+        let ratios = AspectRatioTests()
         let layerTests: [(String, () async throws -> Void)] = [
+            ("ratio presets, canvas dimensions, placement and Undo", ratios.testPresetsAndCanvas),
+            ("ratio crop constraints, source pixels and layer scope", ratios.testCropConstraintsAndScope),
+            ("linked export dimensions, PNG/JPG pixels and snapshot isolation", ratios.testExportDimensionsAndPixels),
+            ("resized export saved state and PNG clipboard", ratios.testResizedExportSavedStateAndClipboard),
             ("layer expansion pixels, percentages, fill, alpha and limits", { try expansion.testExpansionPixelsAndLimits() }),
             ("layer expansion scope, placement, crop, fit and Undo", expansion.testExpansionWorkflow),
             ("layer pixel crop, fit, original, bounds and history", selections.testLayerCropAndFit),

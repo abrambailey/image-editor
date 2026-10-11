@@ -45,6 +45,7 @@ struct EditorSnapshot {
     var filename = "Untitled"
     var hasCustomFilename = false
     var canvas = CGSize(width: 1200, height: 1200)
+    var canvasAspectRatio: AspectRatio?
     var background = CanvasBackground.transparent
     var padding: CGFloat = 100
 
@@ -131,6 +132,7 @@ struct ExportState: Equatable {
     let format: ExportFormat
     let quality: Double
     let includeCanvasPadding: Bool
+    var outputSize: CGSize? = nil
 }
 
 struct ImageExport {
@@ -140,7 +142,8 @@ struct ImageExport {
     func encoded() throws -> Data {
         let image = try ImageEngine.renderExport(layers: document.layers, canvas: document.canvas,
                                                 background: document.background, format: state.format,
-                                                includeCanvasPadding: state.includeCanvasPadding)
+                                                includeCanvasPadding: state.includeCanvasPadding,
+                                                outputSize: state.outputSize)
         return try ImageEngine.encode(image, format: state.format, quality: state.quality / 100)
     }
 }
@@ -155,11 +158,13 @@ final class EditorModel: ObservableObject, Identifiable {
     @Published var format = ExportFormat.png
     @Published var quality = 90.0
     @Published var includeCanvasPadding = false
+    @Published private(set) var exportResize: ExportResize?
     @Published var showURLSheet = false
     @Published var zoom: CGFloat = 1
     /// Pending crop in canvas pixels, measured from the top-left. Preview only.
     @Published private(set) var cropRect: CGRect?
     @Published private(set) var cropTarget = CropTarget.canvas
+    @Published private(set) var cropAspectRatio: AspectRatio?
     @Published private(set) var selectionTool: PixelSelectionShape?
     @Published private(set) var pixelSelection: PixelSelection?
     @Published var pendingImport: PendingImageImport?
@@ -191,9 +196,31 @@ final class EditorModel: ObservableObject, Identifiable {
     }
     private var exportState: ExportState {
         ExportState(revision: document.revision, format: format,
-                    quality: format == .jpeg ? quality : 100, includeCanvasPadding: includeCanvasPadding)
+                    quality: format == .jpeg ? quality : 100,
+                    includeCanvasPadding: exportIncludesCanvasPadding, outputSize: exportOutputSize)
     }
     var pendingExport: ImageExport { ImageExport(document: document, state: exportState) }
+    var exportIncludesCanvasPadding: Bool { includeCanvasPadding || exportResize != nil }
+    var exportOutputSize: CGSize? { exportResize?.size(for: document.canvas) }
+    func exportDimensionRange(_ axis: ImageDimension) -> ClosedRange<Double> {
+        AspectRatio(size: document.canvas).pixelRange(axis: axis, limit: CGSize(width: 8192, height: 8192))
+    }
+    func canvasDimensionRange(_ axis: ImageDimension) -> ClosedRange<Double> {
+        document.canvasAspectRatio?.pixelRange(axis: axis, limit: CGSize(width: 8192, height: 8192)) ?? 1...8192
+    }
+
+    func setExportResizing(_ enabled: Bool) {
+        finishEditingFields()
+        guard !isBusy else { return }
+        exportResize = enabled ? ExportResize(axis: .width, pixels: document.canvas.width) : nil
+    }
+
+    func setExportDimension(_ value: Double, axis: ImageDimension) {
+        guard !isBusy, value.isFinite, exportResize != nil else { return }
+        let size = AspectRatio(size: document.canvas).pixelSize(side: value.rounded(), axis: axis,
+            limit: CGSize(width: ImageEngine.maxDimension, height: ImageEngine.maxDimension))
+        exportResize = ExportResize(axis: axis, pixels: axis == .width ? size.width : size.height)
+    }
     var canZoomIn: Bool { hasImage && aiEdit == nil && zoom < 4 }
     var canZoomOut: Bool { hasImage && aiEdit == nil && zoom > 0.25 }
 
@@ -272,9 +299,38 @@ final class EditorModel: ObservableObject, Identifiable {
 
     func setCanvas(width: Double? = nil, height: Double? = nil) {
         guard !isBusy, !isCropping else { return }
-        let newSize = CGSize(width: min(8192, max(1, (width ?? document.canvas.width).rounded())),
+        guard [width, height].compactMap({ $0 }).allSatisfy({ $0.isFinite }) else { return }
+        var newSize = CGSize(width: min(8192, max(1, (width ?? document.canvas.width).rounded())),
                              height: min(8192, max(1, (height ?? document.canvas.height).rounded())))
-        guard newSize != document.canvas else { return }
+        if let ratio = document.canvasAspectRatio, (width == nil) != (height == nil) {
+            newSize = ratio.pixelSize(side: width ?? height!, axis: width == nil ? .height : .width,
+                                      limit: CGSize(width: 8192, height: 8192))
+        }
+        resizeCanvas(to: newSize, ratio: width != nil && height != nil ? nil : document.canvasAspectRatio)
+    }
+
+    func setCanvasAspectRatio(_ ratio: AspectRatio?) {
+        finishEditingFields()
+        guard !isBusy, !isCropping else { return }
+        guard let ratio else {
+            resizeCanvas(to: document.canvas, ratio: nil)
+            return
+        }
+        // Preserve the current area as closely as whole pixels and limits allow.
+        let width = sqrt(document.canvas.width * document.canvas.height * ratio.value)
+        let size = ratio.pixelSize(side: width, axis: .width, limit: CGSize(width: 8192, height: 8192))
+        resizeCanvas(to: size, ratio: ratio)
+    }
+
+    func swapCanvasDimensions() {
+        finishEditingFields()
+        guard !isBusy, !isCropping else { return }
+        resizeCanvas(to: CGSize(width: document.canvas.height, height: document.canvas.width),
+                     ratio: document.canvasAspectRatio?.swapped)
+    }
+
+    private func resizeCanvas(to newSize: CGSize, ratio: AspectRatio?) {
+        guard newSize != document.canvas || ratio != document.canvasAspectRatio else { return }
         clearSelection()
         checkpoint()
         // Expanding/shrinking the canvas keeps the image relative to its center.
@@ -283,6 +339,7 @@ final class EditorModel: ObservableObject, Identifiable {
             document.layers[index].frame.origin.y += (newSize.height - document.canvas.height) / 2
         }
         document.canvas = newSize
+        document.canvasAspectRatio = ratio
         document.padding = min(document.padding, maximumPadding)
         status = "Canvas resized. Layers keep their size and offset from center."
     }
@@ -304,6 +361,7 @@ final class EditorModel: ObservableObject, Identifiable {
         endGesture()
         clearSelection()
         cropTarget = .canvas
+        cropAspectRatio = nil
         cropRect = CGRect(origin: .zero, size: document.canvas)
         zoom = 1
         status = "Crop Canvas · Drag to select an area. Return applies; Esc cancels."
@@ -317,6 +375,7 @@ final class EditorModel: ObservableObject, Identifiable {
         endGesture()
         clearSelection()
         cropTarget = .layer
+        cropAspectRatio = nil
         cropRect = document.frame
         zoom = 1
         status = "Crop Layer · Keep part of this layer. Canvas size stays the same."
@@ -366,16 +425,38 @@ final class EditorModel: ObservableObject, Identifiable {
 
     var cropPixelSize: CGSize { cropTarget == .layer ? imageSize : document.canvas }
 
-    func updateCrop(_ rect: CGRect) {
+    func cropDimensionRange(_ axis: ImageDimension) -> ClosedRange<Double> {
+        guard let rect = cropPixelRect else { return 1...1 }
+        let limit = CGSize(width: cropPixelSize.width - rect.minX, height: cropPixelSize.height - rect.minY)
+        return cropAspectRatio?.pixelRange(axis: axis, limit: limit)
+            ?? 1...Double(axis == .width ? limit.width : limit.height)
+    }
+
+    func updateCrop(_ rect: CGRect, anchor: CGPoint = CGPoint(x: 0.5, y: 0.5), axis: ImageDimension? = nil,
+                    preservingSize: Bool = false) {
         guard isCropping, !isBusy,
               [rect.origin.x, rect.origin.y, rect.width, rect.height].allSatisfy({ $0.isFinite }) else { return }
         if cropTarget == .layer, let layer = document.selectedLayer {
             let local = ImageEngine.imageRect(rect, in: layer)
-            let clamped = clampedPixelRect(local, size: imageSize)
+            let clamped = (preservingSize ? nil : cropAspectRatio?.cropRect(local, bounds: imageSize, anchor: anchor, axis: axis))
+                ?? clampedPixelRect(local, size: imageSize)
             cropRect = ImageEngine.canvasRect(clamped, in: layer)
         } else {
-            cropRect = clampedPixelRect(rect, size: document.canvas)
+            cropRect = (preservingSize ? nil : cropAspectRatio?.cropRect(rect, bounds: document.canvas, anchor: anchor, axis: axis))
+                ?? clampedPixelRect(rect, size: document.canvas)
         }
+    }
+
+    func setCropAspectRatio(_ ratio: AspectRatio?) {
+        finishEditingFields()
+        guard !isBusy, let cropRect else { return }
+        cropAspectRatio = ratio
+        updateCrop(cropRect)
+    }
+
+    func swapCropAspectRatio() {
+        guard let cropAspectRatio else { return }
+        setCropAspectRatio(cropAspectRatio.swapped)
     }
 
     private func clampedPixelRect(_ rect: CGRect, size: CGSize) -> CGRect {
@@ -392,8 +473,12 @@ final class EditorModel: ObservableObject, Identifiable {
         if let y { rect.origin.y = min(cropPixelSize.height - 1, max(0, y)) }
         if let width { rect.size.width = max(1, min(width, cropPixelSize.width - rect.minX)) }
         if let height { rect.size.height = max(1, min(height, cropPixelSize.height - rect.minY)) }
-        if cropTarget == .layer, let layer = document.selectedLayer { updateCrop(ImageEngine.canvasRect(rect, in: layer)) }
-        else { updateCrop(rect) }
+        let axis: ImageDimension? = width != nil ? .width : height != nil ? .height : nil
+        // Numeric size changes keep the top-left in place; X/Y only translate.
+        let anchor = CGPoint.zero
+        if cropTarget == .layer, let layer = document.selectedLayer {
+            updateCrop(ImageEngine.canvasRect(rect, in: layer), anchor: anchor, axis: axis, preservingSize: axis == nil)
+        } else { updateCrop(rect, anchor: anchor, axis: axis, preservingSize: axis == nil) }
     }
 
     func resetCrop() {
@@ -434,6 +519,7 @@ final class EditorModel: ObservableObject, Identifiable {
             document.layers[index].frame = document.layers[index].frame.offsetBy(dx: -rect.minX, dy: -rect.minY)
         }
         document.canvas = rect.size
+        document.canvasAspectRatio = cropAspectRatio
         document.padding = min(document.padding, maximumPadding)
         status = "Cropped to \(Int(rect.width)) × \(Int(rect.height)) px · ⌘Z undoes the crop."
     }
@@ -876,7 +962,8 @@ final class EditorModel: ObservableObject, Identifiable {
     func copyExport(_ export: ImageExport, to pasteboard: NSPasteboard) async throws {
         let clipboardExport = ImageExport(document: export.document,
             state: ExportState(revision: export.state.revision, format: .png,
-                               quality: 100, includeCanvasPadding: export.state.includeCanvasPadding))
+                               quality: 100, includeCanvasPadding: export.state.includeCanvasPadding,
+                               outputSize: export.state.outputSize))
         let data = try await Task.detached(priority: .userInitiated) { try clipboardExport.encoded() }.value
         pasteboard.clearContents()
         guard pasteboard.setData(data, forType: .png) else {

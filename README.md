@@ -8,24 +8,26 @@ Free and open source under the [MIT license](LICENSE). Currently available to bu
 
 ## Features
 
-- **Crop, resize, and arrange.** Crop individual layers, set exact canvas dimensions, fit and center cropped images, and add padding around your composition. Canvas cropping remains a separate action.
+- **Crop, resize, and arrange.** Crop individual layers, choose common or social aspect ratios for crops and the canvas, set exact canvas dimensions, fit and center cropped images, and add padding around your composition. Canvas cropping remains a separate action.
 - **Expand a layer.** Add a border in pixels or percentages, with one amount for all sides or separate amounts for each edge. Choose white, a custom color, or transparency.
 - **Select pixels.** Draw rectangles or ellipses (Shift for squares or circles), delete selected pixels, or copy and paste the selection as a new layer.
 - **Work with layers and tabs.** Combine images, reorder or hide layers, and keep several edits open with separate Undo histories.
 - **Remove backgrounds locally.** Create transparent cutouts on your Mac, clean up white edges, and restore the original image when needed. Background removal runs offline after the first build downloads its model.
 - **Edit selected layers with AI.** Choose one or more layers, describe a change in words, optionally paint the area to edit, and compare the result with the original. Edit one layer in place or combine only the layers you select. Blend a painted area back into your image for more control.
-- **Export or copy.** Save transparent PNGs or adjustable-quality JPGs, or copy the edited image straight into another app. Export the visible image bounds or include the full canvas.
+- **Export or copy.** Save transparent PNGs or adjustable-quality JPGs, or copy the edited image straight into another app. Export the visible image bounds or include the full canvas. Enter an output width or height to resize while retaining the canvas ratio.
 - **Use familiar Mac controls.** Open files, drag and drop, paste from the clipboard, or load an image from a URL. Undo and Redo are available throughout, and close/quit prompts help protect unexported work.
 
 ## Layer tools
 
 Each layer row has a **crop icon** that trims that layer's actual pixels. **Fit & Center** then uses the cropped dimensions. **Crop Canvas** in the toolbar changes the canvas boundary while retaining the layers' pixels.
 
+The **Ratio** menu in Canvas and both crop inspectors offers common proportions plus Instagram, Facebook, X, LinkedIn, and TikTok presets, including cover photos. Presets set proportions rather than fixed pixel sizes. Width and height stay linked to the selected ratio; crop handles keep it as you drag. Use **Freeform** for independent dimensions or the swap button to reverse the orientation.
+
 The **outward arrows** beside Crop open **Expand Layer**. Set pixels or percentages for all sides or individual edges, choose a fill, and review the resulting dimensions before applying. Percentages apply per side against the current width or height. Expansion keeps the existing image in place; Fit & Center includes the new border. Both layer cropping and expansion support Undo.
 
 The corner toolbar has a **hand** for moving layers, a **dashed rectangle**, and a **dashed circle** for pixel selections. Hold **Shift** while drawing for a square or circle. With the canvas focused, **Delete** clears the selected layer's pixels, **⌘C** copies the selection, and **⌘V** pastes it as a new layer. **Esc** or **⌘D** returns to Move. **Copy Image** still copies the whole visible composition.
 
-See the [user guide](docs/USAGE.md#crop-a-layer-or-the-canvas) for exact crop dimensions, expansion options, and selection behavior.
+See the [user guide](docs/USAGE.md#crop-a-layer-or-the-canvas) for ratio presets, exact crop dimensions, expansion options, and selection behavior.
 
 ## Build and run
 
@@ -53,11 +55,13 @@ See the [AI editing guide](docs/USAGE.md#ai-editing-with-sunburst) for selection
 
 Export saves a flattened PNG or JPG. A dot on a tab marks changes that have not been exported, and closing or quitting offers a chance to export them. Copying an image to the clipboard does not count as saving it.
 
+Enable **Resize for export**, then enter an **Export width** or **Export height** in pixels. The other dimension follows the canvas ratio, rounded to whole pixels. Resized exports include the full canvas and padding to preserve that ratio, and apply to PNG, JPG, and **Copy Image**. The editing canvas and layer pixels stay intact. See [export settings](docs/USAGE.md#export-and-copy) for details.
+
 This is an experimental app: editable layers and Undo history stay in memory, with no project-file format or autosave. Export work you want to keep. See [Keeping your work](docs/USAGE.md#keeping-your-work) for the close and recovery behavior.
 
 ## Limits
 
-- Canvas dimensions are 1–8,192 pixels. Larger imports are downsampled; files and downloads over 50 MB are rejected. Animated images import their first frame.
+- Canvas and export dimensions are 1–8,192 pixels per side. Larger imports are downsampled; files and downloads over 50 MB are rejected. Animated images import their first frame.
 - Background removal can miss fine or translucent details. AI edits can change areas outside a painted selection. Review the result before applying or exporting it.
 - Selecting multiple layers for an AI edit combines them into one result at the topmost selected layer’s position in the stack. Unselected layers stay intact, and Undo restores the previous stack.
 

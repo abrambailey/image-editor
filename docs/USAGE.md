@@ -20,6 +20,8 @@ Each image tab has independent layers, canvas settings, and Undo history. **⌘N
 
 Enter canvas width and height, or use a preset. Changing canvas size preserves every layer's scale and its offset from the center.
 
+Use **Ratio** to choose common proportions or social presets for Instagram, Facebook, X, LinkedIn, and TikTok, including cover photos. Presets change the canvas proportions while keeping its area as close as possible, rather than setting a fixed export resolution. Width and height stay linked to the chosen ratio; **Freeform** lets you edit them independently. The swap button reverses the orientation. These changes support Undo.
+
 Enter minimum padding in pixels and click **Fit & Center**. The selected layer keeps its aspect ratio; wider margins on two sides are expected when the image and canvas have different aspect ratios.
 
 Click an image or its row in **Layers** to select it. Drag the selected image to move it, or drag any corner to resize proportionally. Center guides snap into place; hold **Option** to bypass snapping. With the canvas focused, use arrow keys for one-pixel moves or **Shift + arrow** for ten pixels. The X/Y fields position the image's top-left corner precisely.
@@ -32,7 +34,9 @@ The cropped layer keeps its scale and placement. The canvas and other layers sta
 
 **Crop Canvas** in the toolbar (**⇧⌘X**) keeps the previous canvas-cropping behavior: it changes the canvas boundary and shifts every layer, preserving their pixels and scale. Its dimensions are in canvas pixels. Moving a layer, expanding the canvas, or using Fit & Center afterward can reveal pixels outside that boundary. Enable **Include canvas padding** to export the exact canvas rectangle, including empty space.
 
-For either crop, arrow keys move the selection by one pixel (**Shift + arrow** for ten); **Reset Selection** selects the full layer or canvas. Apply or cancel before making other edits or exporting.
+For either crop, use **Ratio** to choose the same common or social presets, or the original proportions. The ratio stays locked while drawing, dragging handles, and editing either dimension. Width and height round to source pixels. Choose **Freeform** to crop without a ratio constraint, or use the swap button to reverse it.
+
+Arrow keys move the selection by one pixel (**Shift + arrow** for ten). **Reset Selection** selects the full layer or canvas in Freeform, or the largest centered area matching the selected ratio. Apply or cancel before making other edits or exporting.
 
 ## Expand a layer
 
@@ -69,6 +73,8 @@ Choose **PNG** for transparency, or **JPG** and a quality percentage. By default
 
 PNG is lossless; JPG quality changes compression, not image dimensions. Both formats export in sRGB.
 
+Enable **Resize for export** to type an **Export width** or **Export height** in pixels. The other dimension follows the current canvas ratio, rounded to whole pixels. Both sides are limited to 8,192 pixels. Resized exports include the full canvas and its padding so that trimming cannot change the ratio. This changes only the PNG/JPG or clipboard output; canvas dimensions and layer pixels stay intact. Turn it off to return to the usual export bounds and canvas-padding choice.
+
 To use the edited image without saving a file, click **Copy Image** in the toolbar or below Export, press **⌘C** with the canvas focused in Move mode, or use **⇧⌘C** regardless of focus. When editing text, **⌘C** still copies the selected text. Paste into another app with **⌘V**. Copy always uses a full-quality PNG and follows **Include canvas padding**, just like file export. Your edits, scale, crop, and canvas background are retained. A transparent background stays transparent, even when JPG is selected for file export. Excluding canvas padding preserves white pixels within the source image and all nonzero alpha, including faint edges and shadows.
 
 ## Keeping your work
@@ -84,7 +90,7 @@ a tab. Finish or cancel an active crop, AI dialog, or import before quitting.
 Only a successful file export clears the dot. Copying to the clipboard does not,
 because clipboard contents can be replaced. Editing after export marks the tab
 again; Undo back to the exported state clears it. Changing the export format,
-JPG quality, or canvas-padding option also requires a new export.
+JPG quality, canvas-padding option, or export dimensions also requires a new export.
 
 Exports save a flattened PNG or JPG, not editable layers or Undo history. There
 is still no autosave or recovery after a crash or forced quit. The last five

@@ -298,8 +298,15 @@ enum ImageEngine {
     }
 
     private static func render(images: [(CGImage, CGRect)], canvas: CGSize,
-                               background: CanvasBackground, format: ExportFormat) throws -> CGImage {
-        let context = try context(width: Int(canvas.width), height: Int(canvas.height))
+                               background: CanvasBackground, format: ExportFormat,
+                               outputSize: CGSize? = nil) throws -> CGImage {
+        let size = outputSize ?? canvas
+        guard [size.width, size.height, canvas.width, canvas.height].allSatisfy({ $0.isFinite && $0 >= 1 }),
+              size.width <= CGFloat(maxDimension), size.height <= CGFloat(maxDimension) else {
+            throw EditorError.message("Use export dimensions from 1 to 8,192 pixels.")
+        }
+        let context = try context(width: Int(size.width), height: Int(size.height))
+        context.scaleBy(x: size.width / canvas.width, y: size.height / canvas.height)
         if let color = background.color ?? (format == .jpeg ? CGColor(gray: 1, alpha: 1) : nil) {
             context.setFillColor(color)
             context.fill(CGRect(origin: .zero, size: canvas))
@@ -324,8 +331,12 @@ enum ImageEngine {
 
     static func renderExport(layers: [ImageLayer], canvas: CGSize,
                              background: CanvasBackground, format: ExportFormat,
-                             includeCanvasPadding: Bool) throws -> CGImage {
-        try renderExport(images: layers.filter(\.isVisible).map { ($0.image, $0.frame) },
+                             includeCanvasPadding: Bool, outputSize: CGSize? = nil) throws -> CGImage {
+        if let outputSize {
+            return try render(images: layers.filter(\.isVisible).map { ($0.image, $0.frame) },
+                              canvas: canvas, background: background, format: format, outputSize: outputSize)
+        }
+        return try renderExport(images: layers.filter(\.isVisible).map { ($0.image, $0.frame) },
                          canvas: canvas, background: background,
                          format: format, includeCanvasPadding: includeCanvasPadding)
     }
